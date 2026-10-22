@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CITY, riverZ, createCollisionIndex, groundHeight, streetPosition, inCampus } from './city-layout.js';
+import { CITY, BASE, riverZ, ringDistance, createCollisionIndex, groundHeight, streetPosition, inCampus } from './city-layout.js';
 
 test('all three bridges permit crossing while the water between them blocks walking', () => {
   const collision = createCollisionIndex();
@@ -24,15 +24,35 @@ test('building collision spans spatial bins and handles negative coordinates', (
 });
 
 test('lookout ramp connects the street to a walkable raised platform', () => {
-  assert.equal(groundHeight(-647, 265), 0);
-  assert.equal(groundHeight(-647, 200), 13);
-  assert.equal(groundHeight(-647, 120), 29);
+  assert.equal(groundHeight(CITY.lookout.x, 265), 0);
+  assert.equal(groundHeight(CITY.lookout.x, 200), 13);
+  assert.equal(groundHeight(CITY.lookout.x, 120), 29);
   assert.equal(groundHeight(0, riverZ(0)), 0.65);
-  assert.equal(groundHeight(0, 40), 0);
+  assert.equal(groundHeight(0, 460), 0);
 });
 
 test('organic streets preserve bridge axes and leave the base approach outside the campus', () => {
   for (const x of CITY.bridges) assert.equal(streetPosition(x, 504).x, x);
   assert.equal(inCampus(0, -150), true);
-  assert.equal(inCampus(0, 40), false);
+  assert.equal(inCampus(0, 460), false);
+});
+
+
+test('the new base is exactly five times the previous linear dimensions and fits the cleared campus', () => {
+  assert.equal(BASE.scale / BASE.previousScale, 5);
+  assert.equal(BASE.width * BASE.scale, 1248);
+  assert.equal(BASE.depth * BASE.scale, 800);
+  assert.equal(BASE.height * BASE.scale, 864);
+  for (const x of [-BASE.width * BASE.scale / 2, BASE.width * BASE.scale / 2]) {
+    for (const z of [BASE.z - BASE.depth * BASE.scale / 2, BASE.z + BASE.depth * BASE.scale / 2]) assert.equal(inCampus(x, z), true);
+  }
+  assert.equal(groundHeight(BASE.x, BASE.z), 17.6);
+});
+
+test('the south perimeter and base walking spawn remain clear of the river', () => {
+  assert.equal(ringDistance(0, CITY.ring.maxZ), 0);
+  assert.ok(CITY.ring.maxZ + 10 < riverZ(0) - CITY.riverWidth / 2);
+  assert.equal(inCampus(-504, 720), false);
+  assert.equal(inCampus(CITY.lookout.x, CITY.lookout.z), false);
+  assert.equal(groundHeight(0, 460), 0);
 });

@@ -1,11 +1,12 @@
 import * as THREE from 'three';
+import { BASE } from './city-layout.js';
 
-/** BORDER's massive sealed keep, based on the supplied anime reference. */
+/** BORDER's open-roof perimeter fortress, based on the aerial reference. */
 export function createHeadquarters({ scene, box, cylinder }) {
   const center = { x: 23, z: -117 };
-  const width = 78;
-  const depth = 50;
-  const height = 54;
+  const width = BASE.width;
+  const depth = BASE.depth;
+  const height = BASE.height;
   const front = center.z + depth / 2;
   const right = center.x + width / 2;
   const left = center.x - width / 2;
@@ -42,15 +43,76 @@ export function createHeadquarters({ scene, box, cylinder }) {
     color: '#ffffff',
   });
 
-  box(center.x, 0, center.z, width + 3, 1.1, depth + 3, '#a5adba', true);
-  const keep = box(center.x, 1.1, center.z, width, height, depth, '#a3aec4', true);
-  keep.material = wallMaterial;
-  keep.name = 'BORDER fortress';
-  box(center.x, height + 1.1, center.z, width + 0.4, 0.6, depth + 0.4, '#aeb9cc');
-  // Low parapets leave a single, uninterrupted flat roof silhouette.
-  for (const z of [front - 0.3, center.z - depth / 2 + 0.3]) {
-    box(center.x, height + 1.7, z, width, 0.6, 0.4, '#a3aec4');
+  // Four independent walls leave the courtyard open to the sky; no full roof or solid collision box.
+  const thickness = BASE.wallThickness;
+  const innerWidth = width - thickness * 2;
+  const innerDepth = depth - thickness * 2;
+  const interiorCanvas = document.createElement('canvas');
+  interiorCanvas.width = 1536;
+  interiorCanvas.height = 1024;
+  const innerPaint = interiorCanvas.getContext('2d');
+  innerPaint.fillStyle = '#8791ad';
+  innerPaint.fillRect(0, 0, 1536, 1024);
+  for (let row = 0; row < 9; row++) {
+    const y = row * 118;
+    innerPaint.fillStyle = '#5e6f8f';
+    innerPaint.fillRect(0, y + 80, 1536, 9);
+    innerPaint.fillStyle = '#b6bfd1';
+    innerPaint.fillRect(0, y + 95, 1536, 4);
   }
+  for (let col = 0; col <= 14; col++) {
+    const x = col * 109.7;
+    innerPaint.fillStyle = '#586985';
+    innerPaint.fillRect(x - 3, 0, 23, 1024);
+    innerPaint.fillStyle = '#b9c3d5';
+    innerPaint.fillRect(x, 0, 10, 1024);
+    innerPaint.fillStyle = '#7685a0';
+    innerPaint.fillRect(x + 10, 0, 6, 1024);
+  }
+  const interiorTexture = new THREE.CanvasTexture(interiorCanvas);
+  interiorTexture.colorSpace = THREE.SRGBColorSpace;
+  interiorTexture.anisotropy = 4;
+  const interiorMaterial = new THREE.MeshStandardMaterial({ map: interiorTexture, roughness: 0.94 });
+  const roofMaterial = new THREE.MeshStandardMaterial({ color: '#69768e', roughness: 1 });
+  const outerFaces = [wallMaterial, wallMaterial, roofMaterial, wallMaterial, wallMaterial, wallMaterial];
+  const walls = [
+    { name: 'front', x: center.x, z: front - thickness / 2, w: width, d: thickness, innerFace: 5 },
+    { name: 'back', x: center.x, z: center.z - depth / 2 + thickness / 2, w: width, d: thickness, innerFace: 4 },
+    { name: 'left', x: left + thickness / 2, z: center.z, w: thickness, d: innerDepth, innerFace: 0 },
+    { name: 'right', x: right - thickness / 2, z: center.z, w: thickness, d: innerDepth, innerFace: 1 },
+  ];
+  box(center.x, 0, center.z, width + 3, BASE.floorHeight, depth + 3, '#b0b8c7');
+  for (const wall of walls) {
+    const mesh = box(wall.x, BASE.floorHeight, wall.z, wall.w, height, wall.d, '#a3aec4', true);
+    mesh.name = `BORDER ${wall.name} perimeter wall`;
+    const faces = [...outerFaces];
+    faces[wall.innerFace] = interiorMaterial;
+    mesh.material = faces;
+  }
+  // Narrow walkways and pale parapets outline both edges of the open roof.
+  const roofY = height + BASE.floorHeight;
+  for (const z of [front, center.z - depth / 2, front - thickness, center.z - depth / 2 + thickness]) {
+    box(center.x, roofY, z, width, 0.38, 0.24, '#c4cbdd');
+  }
+  for (const x of [left, right, left + thickness, right - thickness]) {
+    box(x, roofY, center.z, 0.24, 0.38, depth, '#c4cbdd');
+  }
+  const floorCanvas = document.createElement('canvas');
+  floorCanvas.width = floorCanvas.height = 512;
+  const floorPaint = floorCanvas.getContext('2d');
+  floorPaint.fillStyle = '#b7c0d0';
+  floorPaint.fillRect(0, 0, 512, 512);
+  floorPaint.strokeStyle = '#8e9db2';
+  floorPaint.lineWidth = 2;
+  for (let i = 0; i <= 16; i++) {
+    floorPaint.beginPath();floorPaint.moveTo(i * 32, 0);floorPaint.lineTo(i * 32, 512);floorPaint.stroke();
+    floorPaint.beginPath();floorPaint.moveTo(0, i * 32);floorPaint.lineTo(512, i * 32);floorPaint.stroke();
+  }
+  const floorTexture = new THREE.CanvasTexture(floorCanvas);
+  floorTexture.colorSpace = THREE.SRGBColorSpace;
+  const floor = box(center.x, BASE.floorHeight, center.z, innerWidth, 0.015, innerDepth, '#b7c0d0');
+  floor.material = new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 1 });
+  floor.name = 'BORDER open courtyard floor';
 
   function antenna(x, y, z, h) {
     cylinder(x, y, z, 0.065, h, '#b5c5d6', 6);
@@ -62,7 +124,10 @@ export function createHeadquarters({ scene, box, cylinder }) {
   function tower(x, z, w = 10, h = 14) {
     const bottom = 46;
     box(x, bottom, z, w, h, 9, '#939fb9');
-    box(x, bottom + h, z, w + 0.25, 0.35, 9.25, '#acb8ce');
+    // Recessed tower rooftop with a raised rim, visible from the new aerial angle.
+    box(x, bottom + h, z, w, 0.05, 9, '#58667f');
+    for (const dz of [-4.5, 4.5]) box(x, bottom + h, z + dz, w + 0.25, 0.6, 0.25, '#c0c7da');
+    for (const dx of [-w / 2, w / 2]) box(x + dx, bottom + h, z, 0.25, 0.6, 9, '#c0c7da');
 
     // Curved, hanging buttress: a distinctive feature beneath the watchtowers.
     const shape = new THREE.Shape();
@@ -169,7 +234,10 @@ export function createHeadquarters({ scene, box, cylinder }) {
   antenna(33, 10.7, front + 2.5, 3);
 
   return {
-    name: 'BORDER reference fortress',
+    name: 'BORDER open-courtyard fortress',
+    openRoof: true,
+    courtyard: { width: innerWidth, depth: innerDepth },
+    wallCount: walls.length,
     width, depth, height,
     towers: 4,
     emblems: 2,

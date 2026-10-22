@@ -1,15 +1,29 @@
 // Shared world coordinates for geometry, navigation, collisions and the map.
+export const BASE = {
+  previousScale: 3.2,
+  enlargement: 5,
+  scale: 3.2 * 5,
+  x: 0,
+  z: -150,
+  width: 78,
+  depth: 50,
+  height: 54,
+  wallThickness: 4.2,
+  floorHeight: 1.1,
+};
 export const CITY = {
   halfSize: 1120,
   blockSize: 72,
   riverWidth: 58,
   bridges: [-504, 0, 504],
-  campus: { minX: -149, maxX: 149, minZ: -264, maxZ: -34 },
+  campus: { minX: -770, maxX: 770, minZ: -680, maxZ: 415 },
+  ring: { minX: -820, maxX: 820, minZ: -730, maxZ: 455, radius: 100 },
+  lookout: { x: -985, z: 120, rx: 115, rz: 135 },
   forests: [
-    { x: -640, z: 265, rx: 230, rz: 135 },
-    { x: 620, z: 195, rx: 245, rz: 145 },
-    { x: -820, z: -430, rx: 170, rz: 205 },
-    { x: 805, z: -440, rx: 160, rz: 180 },
+    { x: -980, z: 265, rx: 120, rz: 135 },
+    { x: 980, z: 195, rx: 115, rz: 145 },
+    { x: -955, z: -430, rx: 110, rz: 205 },
+    { x: 975, z: -440, rx: 110, rz: 180 },
     { x: -260, z: 830, rx: 175, rz: 100 },
     { x: 750, z: 875, rx: 230, rz: 115 },
   ],
@@ -22,6 +36,14 @@ export function riverZ(x) {
 export function inCampus(x, z, margin = 0) {
   const c = CITY.campus;
   return x > c.minX - margin && x < c.maxX + margin && z > c.minZ - margin && z < c.maxZ + margin;
+}
+
+export function ringDistance(x, z) {
+  const ring = CITY.ring;
+  const centerZ = (ring.minZ + ring.maxZ) / 2;
+  const qx = Math.abs(x) - (ring.maxX - ring.radius);
+  const qz = Math.abs(z - centerZ) - ((ring.maxZ - ring.minZ) / 2 - ring.radius);
+  return Math.abs(Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - ring.radius);
 }
 
 export function forestAt(x, z, margin = 0) {
@@ -45,16 +67,18 @@ export function streetPosition(x, z) {
 }
 
 export function lookoutTerrainHeight(x, z) {
-  const dx = x + 647, dz = z - 120;
-  const crest = Math.max(0, 1 - (dx / 225) ** 2 - (dz / 135) ** 2);
+  const dx = x - CITY.lookout.x, dz = z - CITY.lookout.z;
+  const crest = Math.max(0, 1 - (dx / CITY.lookout.rx) ** 2 - (dz / CITY.lookout.rz) ** 2);
   return Math.max(0, crest * crest * 29 * (1 + 0.12 * Math.sin(dx * 0.031 + 120) * Math.cos(dz * 0.025)) - 1);
 }
 
 export function groundHeight(x, z) {
   if (onBridge(x) && Math.abs(z - riverZ(x)) < 53) return 0.65;
+  if (Math.abs(x - BASE.x) < BASE.width * BASE.scale / 2 + 1.5 * BASE.scale
+      && Math.abs(z - BASE.z) < BASE.depth * BASE.scale / 2 + 1.5 * BASE.scale) return BASE.floorHeight * BASE.scale;
   // A walkable path winds up the western lookout hill.
-  if (Math.abs(x + 647) < 8 && z > 120 && z < 265) return Math.min(29, (265 - z) * 0.2);
-  if (Math.hypot((x + 647) / 32, (z - 120) / 30) < 1) return 29;
+  if (Math.abs(x - CITY.lookout.x) < 8 && z > 120 && z < 265) return Math.min(29, (265 - z) * 0.2);
+  if (Math.hypot((x - CITY.lookout.x) / 32, (z - 120) / 30) < 1) return 29;
   return lookoutTerrainHeight(x, z);
 }
 

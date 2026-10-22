@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CITY, riverZ, inRiver, inCampus, forestAt, seededRandom, streetPosition, lookoutTerrainHeight } from './city-layout.js';
+import { CITY, riverZ, ringDistance, inRiver, inCampus, forestAt, seededRandom, streetPosition, lookoutTerrainHeight } from './city-layout.js';
 
 const walls = ['#d6d8d8', '#eee9dc', '#c9cecd', '#e1dace', '#e9e9e2', '#b7c5cb'];
 const roofs = ['#53697c', '#5e6a77', '#7a6660', '#69756c', '#78858b', '#796b67'];
@@ -110,14 +110,23 @@ export function createCity({ scene, box, cylinder, collision }) {
 
   // A broad ring road connects dense neighborhoods around the protected HQ site.
   const ring = [];
-  for (let i = 0; i <= 160; i++) {
-    const a = i / 160 * Math.PI * 2;
-    ring.push([Math.cos(a) * 211, -148 + Math.sin(a) * 157]);
+  const perimeter = CITY.ring;
+  const radius = perimeter.radius;
+  const corners = [
+    [perimeter.maxX - radius, perimeter.maxZ - radius, 0],
+    [perimeter.minX + radius, perimeter.maxZ - radius, Math.PI / 2],
+    [perimeter.minX + radius, perimeter.minZ + radius, Math.PI],
+    [perimeter.maxX - radius, perimeter.minZ + radius, Math.PI * 1.5],
+  ];
+  for (const [cx, cz, start] of corners) for (let i = 0; i <= 24; i++) {
+    const a = start + i / 24 * Math.PI / 2;
+    ring.push([cx + Math.cos(a) * radius, cz + Math.sin(a) * radius]);
   }
+  ring.push(ring[0]);
   ribbon(scene, ring, 14, '#78858a', 0.12);
   ribbon(scene, ring, 0.25, '#ebe6d4', 0.135);
   function nearRing(x, z, padding = 13) {
-    return Math.abs(Math.hypot(x / 211, (z + 148) / 157) - 1) * 157 < padding;
+    return ringDistance(x, z) < padding;
   }
 
   // Thousands of individual lots, with density dropping toward the green outskirts.
@@ -162,9 +171,9 @@ export function createCity({ scene, box, cylinder, collision }) {
       const a = random() * Math.PI * 2, r = Math.sqrt(random()) * 0.98;
       const x = forest.x + Math.cos(a) * r * forest.rx;
       const z = forest.z + Math.sin(a) * r * forest.rz;
-      if (inRiver(x, z, 36)) continue;
+      if (inRiver(x, z, 36) || inCampus(x, z, 12) || nearRing(x, z, 12)) continue;
       const hillHeight = lookoutTerrainHeight(x, z);
-      if (Math.abs(x + 647) < 10 && z < 270 && z > 90) continue;
+      if (Math.abs(x - CITY.lookout.x) < 10 && z < 270 && z > 90) continue;
       addTree(x, z, 1 + random() * 0.6, hillHeight);
     }
   }
@@ -202,11 +211,16 @@ export function createCity({ scene, box, cylinder, collision }) {
   }
 
   // Keep the fortress as the dominant center, surrounded by a cleared ochre perimeter.
-  box(0, -0.12, -149, 300, 0.13, 232, '#bfad83');
-  for (const x of [-137, 137]) box(x, 0.02, -149, 8, 0.08, 215, '#a7a899');
-  box(0, 0.02, -43, 280, 0.08, 8, '#a7a899');
-  // Southern approach from the urban center to the base's perimeter.
-  box(0, 0.06, -2, 17, 0.08, 68, '#64727a');
+  const campus = CITY.campus;
+  const campusWidth = campus.maxX - campus.minX;
+  const campusDepth = campus.maxZ - campus.minZ;
+  const campusZ = (campus.minZ + campus.maxZ) / 2;
+  box(0, -0.12, campusZ, campusWidth, 0.13, campusDepth, '#bfad83');
+  for (const x of [campus.minX + 15, campus.maxX - 15]) box(x, 0.02, campusZ, 8, 0.08, campusDepth - 30, '#a7a899');
+  box(0, 0.02, campus.maxZ - 15, campusWidth - 30, 0.08, 8, '#a7a899');
+  // Connect the enlarged perimeter to the bridge approach without moving the river.
+  const approachEnd = riverZ(0) - 50;
+  box(0, 0.06, (campus.maxZ + approachEnd) / 2, 17, 0.08, approachEnd - campus.maxZ, '#64727a');
 
   // Agricultural patches around the margins prevent the city from becoming a uniform carpet.
   const fieldEntries = [];
@@ -236,7 +250,7 @@ export function createCity({ scene, box, cylinder, collision }) {
     mesh.receiveShadow = true;
     scene.add(mesh);
   }
-  terrain(-647, 120, 225, 135, 29, '#457b43');
+  terrain(CITY.lookout.x, CITY.lookout.z, CITY.lookout.rx, CITY.lookout.rz, 29, '#457b43');
   for (let layer = 2; layer >= 0; layer--) {
     for (let i = 0; i < 14; i++) {
       const x = -2600 + i * 400 + (random() - 0.5) * 100;
@@ -248,17 +262,17 @@ export function createCity({ scene, box, cylinder, collision }) {
   }
 
   // Lookout plateau and a connected sloping walking path.
-  box(-647, 28.7, 120, 35, 0.3, 28, '#b4b49a');
+  box(CITY.lookout.x, 28.7, 120, 35, 0.3, 28, '#b4b49a');
   const pathGeometry = new THREE.BufferGeometry();
   pathGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
-    -654, 0.1, 265, -640, 0.1, 265, -654, 29.05, 120,
-    -640, 0.1, 265, -640, 29.05, 120, -654, 29.05, 120,
+    CITY.lookout.x - 7, 0.1, 265, CITY.lookout.x + 7, 0.1, 265, CITY.lookout.x - 7, 29.05, 120,
+    CITY.lookout.x + 7, 0.1, 265, CITY.lookout.x + 7, 29.05, 120, CITY.lookout.x - 7, 29.05, 120,
   ], 3));
   pathGeometry.computeVertexNormals();
   const lookoutPath = new THREE.Mesh(pathGeometry, new THREE.MeshStandardMaterial({ color: '#c3bca2', side: THREE.DoubleSide }));
   scene.add(lookoutPath);
-  for (const x of [-662, -632]) box(x, 29, 120, 0.2, 1.1, 26, '#817d64');
-  for (const x of [-656, -638]) box(x, 29.05, 112, 7, 0.5, 1.2, '#a28e68');
+  for (const x of [CITY.lookout.x - 15, CITY.lookout.x + 15]) box(x, 29, 120, 0.2, 1.1, 26, '#817d64');
+  for (const x of [CITY.lookout.x - 9, CITY.lookout.x + 9]) box(x, 29.05, 112, 7, 0.5, 1.2, '#a28e68');
 
   instances(scene, new THREE.CylinderGeometry(0.5, 0.65, 1, 5), plaster, trunks, false);
   instances(scene, new THREE.IcosahedronGeometry(1, 1), plaster, foliage, false);

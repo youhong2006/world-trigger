@@ -2,14 +2,14 @@ import * as THREE from 'three';
 import './style.css';
 import { createHeadquarters } from './headquarters.js';
 import { createCity } from './city.js';
-import { CITY, riverZ, groundHeight, createCollisionIndex } from './city-layout.js';
+import { CITY, BASE, riverZ, groundHeight, createCollisionIndex } from './city-layout.js';
 
 const host = document.querySelector('#scene');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#72b5e4');
-scene.fog = new THREE.Fog('#accdd9', 1600, 5300);
-const overviewPosition = new THREE.Vector3(140, 800, 1710);
-const overviewLook = new THREE.Vector3(0, 45, -120);
+scene.fog = new THREE.Fog('#accdd9', 3000, 8500);
+const overviewPosition = new THREE.Vector3(160, 2200, 2700);
+const overviewLook = new THREE.Vector3(0, 220, -150);
 const camera = new THREE.PerspectiveCamera(51, innerWidth / innerHeight, 1, 9000);
 camera.position.copy(overviewPosition);
 camera.lookAt(overviewLook);
@@ -31,11 +31,11 @@ host.appendChild(renderer.domElement);
 const ambient = new THREE.HemisphereLight('#e0efff', '#6c8651', 1.9);
 scene.add(ambient);
 const sun = new THREE.DirectionalLight('#fff4dd', 2.5);
-sun.position.set(-440, 650, 360);
-sun.target.position.set(0, 0, -150);
+sun.position.set(-1600, 2500, 1600);
+sun.target.position.set(0, 300, -150);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -220, right: 220, top: 220, bottom: -220, near: 1, far: 1800 });
+Object.assign(sun.shadow.camera, { left: -1050, right: 1050, top: 1050, bottom: -1050, near: 1, far: 6500 });
 sun.shadow.normalBias = 0.15;
 scene.add(sun, sun.target);
 const materials = new Map();
@@ -67,7 +67,7 @@ const city = createCity({ scene, box, cylinder, collision });
 
 // Keep the reference model intact, scaled and recentered in the new city plan.
 const baseGroup = new THREE.Group();
-const baseScale = 3.2;
+const baseScale = BASE.scale;
 const baseOffset = new THREE.Vector3(-23 * baseScale, 0, -150 + 117 * baseScale);
 baseGroup.scale.setScalar(baseScale);
 baseGroup.position.copy(baseOffset);
@@ -82,10 +82,10 @@ const headquarters = createHeadquarters({
   cylinder: (x, y, z, r, h, color, n) => cylinder(x, y, z, r, h, color, n, baseGroup),
 });
 const destinations = [
-  { name: '住宅街', pos: new THREE.Vector3(-504, 1.75, 360), yaw: 0, previewPosition: new THREE.Vector3(-345, 115, 590), previewLook: new THREE.Vector3(-504, 0, 300) },
-  { name: 'BORDER 本部', pos: new THREE.Vector3(0, 1.75, 40), yaw: 0, pitch: 0.32, previewPosition: new THREE.Vector3(260, 128, 130), previewLook: new THREE.Vector3(0, 60, -150) },
+  { name: '住宅街', pos: new THREE.Vector3(-504, 1.75, 720), yaw: 0, previewPosition: new THREE.Vector3(-345, 115, 930), previewLook: new THREE.Vector3(-504, 0, 710) },
+  { name: 'BORDER 本部', pos: new THREE.Vector3(0, 1.75, 460), yaw: 0, pitch: 0.65, previewPosition: new THREE.Vector3(1350, 2800, 1350), previewLook: new THREE.Vector3(0, 300, -150) },
   { name: '河川敷', pos: new THREE.Vector3(0, 1.75, riverZ(0) - 65), yaw: Math.PI, previewPosition: new THREE.Vector3(280, 180, 900), previewLook: new THREE.Vector3(0, 0, 550) },
-  { name: '山丘公園', pos: new THREE.Vector3(-647, 30.75, 120), yaw: -1.88, previewPosition: new THREE.Vector3(-800, 160, 440), previewLook: new THREE.Vector3(-470, 25, 80) },
+  { name: '山丘公園', pos: new THREE.Vector3(CITY.lookout.x, 30.75, 120), yaw: -1.88, previewPosition: new THREE.Vector3(-1100, 220, 460), previewLook: new THREE.Vector3(-800, 60, 80) },
 ];
 let exploring=false,yaw=0,pitch=0,keys={},target=null,day=true,current=0;const walking=document.querySelector('#walking');const clock=new THREE.Clock();const toast=document.querySelector('#toast');let toastTimer;
 function notify(t){toast.textContent=t;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),2600);}
@@ -108,16 +108,22 @@ for(const forest of CITY.forests){const [x,z]=mapPoint(forest.x,forest.z);mapCtx
 mapCtx.fillStyle='#dce0d5';for(const lot of city.lots){const [x,z]=mapPoint(lot.x,lot.z);mapCtx.fillRect(x,z,1.6,1.5);}
 mapCtx.strokeStyle='#568da5';mapCtx.lineWidth=CITY.riverWidth/9.6;mapCtx.beginPath();for(let x=-1260;x<=1260;x+=20){const [px,pz]=mapPoint(x,riverZ(x));if(x===-1260)mapCtx.moveTo(px,pz);else mapCtx.lineTo(px,pz);}mapCtx.stroke();
 for(const x of CITY.bridges){const [px,pz]=mapPoint(x,riverZ(x));mapCtx.fillStyle='#d7d6c3';mapCtx.fillRect(px-1.5,pz-6,3,12);}
-const [baseX,baseZ]=mapPoint(0,-150);mapCtx.fillStyle='#c3b48b';mapCtx.fillRect(baseX-22,baseZ-12,44,24);mapCtx.fillStyle='#8d9cb2';mapCtx.fillRect(baseX-14,baseZ-7,28,14);mapCtx.font='8px sans-serif';mapCtx.fillStyle='#294638';mapCtx.fillText('BORDER',baseX-15,baseZ-16);
+const [baseX,baseZ]=mapPoint(BASE.x,BASE.z);
+const [campusLeft,campusTop]=mapPoint(CITY.campus.minX,CITY.campus.minZ);
+mapCtx.fillStyle='#c3b48b';mapCtx.fillRect(campusLeft,campusTop,(CITY.campus.maxX-CITY.campus.minX)/7,(CITY.campus.maxZ-CITY.campus.minZ)/9.6);
+const mapBaseWidth=BASE.width*baseScale/7,mapBaseDepth=BASE.depth*baseScale/9.6;
+mapCtx.fillStyle='#8d9cb2';mapCtx.fillRect(baseX-mapBaseWidth/2,baseZ-mapBaseDepth/2,mapBaseWidth,mapBaseDepth);
+mapCtx.fillStyle='#b9c4d6';mapCtx.fillRect(baseX-mapBaseWidth/2+BASE.wallThickness*baseScale/7,baseZ-mapBaseDepth/2+BASE.wallThickness*baseScale/9.6,(BASE.width-BASE.wallThickness*2)*baseScale/7,(BASE.depth-BASE.wallThickness*2)*baseScale/9.6);
+mapCtx.font='8px sans-serif';mapCtx.fillStyle='#294638';mapCtx.fillText('BORDER',baseX-15,baseZ-3);
 function drawMap(){ctx.drawImage(mapBackground,0,0);const [px,pz]=mapPoint(camera.position.x,camera.position.z);if(exploring){ctx.fillStyle='#214f39';ctx.beginPath();ctx.arc(px,pz,4,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#214f3977';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(px,pz,7,0,Math.PI*2);ctx.moveTo(px,pz);ctx.lineTo(px-Math.sin(yaw)*13,pz-Math.cos(yaw)*13);ctx.stroke();}else{ctx.strokeStyle='#fff7';ctx.beginPath();ctx.moveTo(140,260);ctx.lineTo(baseX-30,baseZ);ctx.lineTo(baseX+30,baseZ);ctx.lineTo(220,260);ctx.stroke();}document.querySelector('#coordinates').textContent=exploring?`X ${Math.round(camera.position.x)} / Z ${Math.round(camera.position.z)}`:'2.2 × 2.2 km';}
 function blocked(x,z){return collision.blocked(x,z);}
 let frames=0;renderer.setAnimationLoop(()=>{const dt=Math.min(clock.getDelta(),.05);if(exploring){camera.rotation.set(pitch,yaw,0,'YXZ');let f=Number(!!(keys.KeyW||keys.ArrowUp))-Number(!!(keys.KeyS||keys.ArrowDown)),s=Number(!!(keys.KeyD||keys.ArrowRight))-Number(!!(keys.KeyA||keys.ArrowLeft));const length=Math.hypot(f,s)||1,speed=(keys.ShiftLeft||keys.ShiftRight?44:12)*dt;let dx=(-Math.sin(yaw)*f+Math.cos(yaw)*s)/length*speed,dz=(-Math.cos(yaw)*f-Math.sin(yaw)*s)/length*speed;const nx=THREE.MathUtils.clamp(camera.position.x+dx,-CITY.halfSize,CITY.halfSize),nz=THREE.MathUtils.clamp(camera.position.z+dz,-CITY.halfSize,CITY.halfSize);if(!blocked(nx,camera.position.z))camera.position.x=nx;if(!blocked(camera.position.x,nz))camera.position.z=nz;const ground=groundHeight(camera.position.x,camera.position.z);camera.position.y=THREE.MathUtils.lerp(camera.position.y,ground+1.75,Math.min(1,dt*10));}else if(target){camera.position.lerp(target.pos,1-Math.exp(-dt*2.5));camera.lookAt(target.look);if(camera.position.distanceTo(target.pos)<.03)target=null;}if(++frames%8===0)drawMap();renderer.render(scene,camera);});
 window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});drawMap();
 // Read-only diagnostics for smoke tests and development.
-window.__mikado={get state(){return {exploring,day,current,position:camera.position.toArray(),objects:scene.children.length,city:{buildings:city.lots.length,trees:city.trees,bridges:city.bridges,bounds:CITY.halfSize,riverDirection:'east-west',headquartersCenter:[0,-150]},headquarters:{name:headquarters.name,width:headquarters.width*baseScale,depth:headquarters.depth*baseScale,height:headquarters.height*baseScale,towers:headquarters.towers,emblems:headquarters.emblems}};}};
+window.__mikado={get state(){return {exploring,day,current,position:camera.position.toArray(),objects:scene.children.length,city:{buildings:city.lots.length,trees:city.trees,bridges:city.bridges,bounds:CITY.halfSize,riverDirection:'east-west',headquartersCenter:[0,-150]},headquarters:{name:headquarters.name,enlargement:BASE.enlargement,openRoof:headquarters.openRoof,wallCount:headquarters.wallCount,courtyard:{width:headquarters.courtyard.width*baseScale,depth:headquarters.courtyard.depth*baseScale},width:headquarters.width*baseScale,depth:headquarters.depth*baseScale,height:headquarters.height*baseScale,towers:headquarters.towers,emblems:headquarters.emblems}};}};
 
 const overviewButton=document.querySelector('#overview');
 overviewButton.onclick=()=>{if(exploring)leave();document.body.classList.add('overview');target={pos:overviewPosition.clone(),look:overviewLook.clone()};document.querySelector('#location').textContent='三門市全域';};
-renderer.domElement.addEventListener('wheel',e=>{if(exploring||!document.body.classList.contains('overview'))return;e.preventDefault();target=null;const offset=camera.position.clone().sub(overviewLook);offset.setLength(THREE.MathUtils.clamp(offset.length()*Math.exp(e.deltaY*.0007),650,3200));camera.position.copy(overviewLook).add(offset);camera.lookAt(overviewLook);},{passive:false});
+renderer.domElement.addEventListener('wheel',e=>{if(exploring||!document.body.classList.contains('overview'))return;e.preventDefault();target=null;const offset=camera.position.clone().sub(overviewLook);offset.setLength(THREE.MathUtils.clamp(offset.length()*Math.exp(e.deltaY*.0007),1800,5200));camera.position.copy(overviewLook).add(offset);camera.lookAt(overviewLook);},{passive:false});
 document.body.classList.add('overview');
 document.querySelector('#location').textContent='三門市全域';
