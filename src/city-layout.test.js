@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CITY, BASE, basinRadius, terrainHeight, settlementDensity, riverZ, ringDistance, createCollisionIndex, groundHeight, streetPosition, inCampus } from './city-layout.js';
+import { CITY, BASE, basinRadius, terrainHeight, pavedSurfaceOffset, settlementDensity, riverZ, ringDistance, createCollisionIndex, groundHeight, streetPosition, inCampus } from './city-layout.js';
 
 test('all three bridges permit crossing while the water between them blocks walking', () => {
   const collision = createCollisionIndex();
@@ -25,9 +25,10 @@ test('building collision spans spatial bins and handles negative coordinates', (
 
 test('walking and the viewpoint use the same continuous terrain as the rendered landscape', () => {
   assert.ok(groundHeight(CITY.lookout.x, CITY.lookout.z) >= 44);
-  for (const z of [120, 160, 200, 265]) assert.equal(groundHeight(CITY.lookout.x, z), terrainHeight(CITY.lookout.x, z));
+  assert.equal(groundHeight(CITY.lookout.x, CITY.lookout.z), terrainHeight(CITY.lookout.x, CITY.lookout.z) + .25);
+  for (const z of [160, 200, 265]) assert.equal(groundHeight(CITY.lookout.x, z), terrainHeight(CITY.lookout.x, z) + pavedSurfaceOffset(CITY.lookout.x, z));
   assert.equal(groundHeight(0, riverZ(0)), 0.65);
-  assert.equal(groundHeight(0, 460), 0);
+  assert.equal(groundHeight(0, 460), .17);
 });
 
 test('organic streets preserve bridge axes and leave the base approach outside the campus', () => {
@@ -53,7 +54,7 @@ test('the south perimeter and base walking spawn remain clear of the river', () 
   assert.ok(CITY.ring.maxZ + 10 < riverZ(0) - CITY.riverWidth / 2);
   assert.equal(inCampus(-504, 720), false);
   assert.equal(inCampus(CITY.lookout.x, CITY.lookout.z), false);
-  assert.equal(groundHeight(0, 460), 0);
+  assert.equal(groundHeight(0, 460), .17);
 });
 
 

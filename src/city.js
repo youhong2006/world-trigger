@@ -1,53 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createLandscape } from './landscape.js';
+import { createArchitecture } from './architecture.js';
+import { ARCHITECTURE, buildingDimensions, facesNearestStreet, orientedFootprint, fitsStreetLot } from './building-metrics.js';
 import { CITY, basinRadius, terrainHeight, settlementDensity, riverZ, ringDistance, inRiver, inCampus, forestAt, seededRandom, streetPosition } from './city-layout.js';
 
-const walls = ['#d6d8d8', '#eee9dc', '#c9cecd', '#e1dace', '#e9e9e2', '#b7c5cb'];
-const roofs = ['#53697c', '#5e6a77', '#7a6660', '#69756c', '#78858b', '#796b67'];
 const greens = ['#2a633f', '#3d7746', '#477f48', '#376e42', '#56884b'];
-
-function gableGeometry() {
-  // Unit gable roof: ridge follows Z, with two sloped planes and closed gable ends.
-  const points = [
-    -.5, 0, -.5, 0, 1, -.5, -.5, 0, .5,
-    -.5, 0, .5, 0, 1, -.5, 0, 1, .5,
-    .5, 0, .5, 0, 1, .5, .5, 0, -.5,
-    .5, 0, -.5, 0, 1, .5, 0, 1, -.5,
-    -.5, 0, -.5, .5, 0, -.5, 0, 1, -.5,
-    .5, 0, .5, -.5, 0, .5, 0, 1, .5,
-  ];
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
-  // Faces must point outward so the pitched roofs remain visible from above.
-  geometry.setIndex(Array.from({ length: points.length / 9 }, (_, i) => [i * 3, i * 3 + 2, i * 3 + 1]).flat());
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
-function facadeMaterial() {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, 256, 256);
-  for (const y of [42, 149]) for (const x of [36, 157]) {
-    ctx.fillStyle = '#d0d4d4';
-    ctx.fillRect(x - 4, y - 4, 54, 62);
-    ctx.fillStyle = '#4b7185';
-    ctx.fillRect(x, y, 46, 54);
-    ctx.fillStyle = '#7796a1';
-    ctx.fillRect(x + 4, y + 3, 17, 47);
-    ctx.fillStyle = '#d5d8d5';
-    ctx.fillRect(x + 21, y, 3, 54);
-  }
-  ctx.fillStyle = '#b4bcb9';
-  ctx.fillRect(0, 247, 256, 9);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
-  return new THREE.MeshStandardMaterial({ map: texture, roughness: 0.95 });
-}
 
 function instances(scene, geometry, material, entries, shadows = true) {
   const mesh = new THREE.InstancedMesh(geometry, material, entries.length);
@@ -92,11 +50,13 @@ export function createCity({ scene, box, collision }) {
   const random = seededRandom();
   const pick = values => values[Math.floor(random() * values.length)];
   const terrain = createLandscape(scene);
-  const lots = [], bodies = [], roofEntries = [], flatRoofs = [], trunks = [], foliage = [], markings = [];
+  const lots = [], trunks = [], foliage = [], markings = [];
+  const architecture = createArchitecture(scene);
   const unitBox = new THREE.BoxGeometry(1, 1, 1);
   const plaster = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.95 });
-  const roadMaterial = new THREE.MeshStandardMaterial({ color: '#8a9495', roughness: 1, side: THREE.DoubleSide });
-  const roadMeshes = [];
+  const roadMaterial = new THREE.MeshStandardMaterial({ color: '#6c7e89', roughness: 1, side: THREE.DoubleSide });
+  const roadMeshes = [], sidewalkMeshes = [];
+  const sidewalkMaterial = new THREE.MeshStandardMaterial({ color: '#bbc2b7', roughness: 1, side: THREE.DoubleSide });
 
   function nearRing(x, z, padding = 13) { return ringDistance(x, z) < padding; }
   function streetAllowed(x, z) {
@@ -105,7 +65,8 @@ export function createCity({ scene, box, collision }) {
   }
   function addStreet(points, width = 6) {
     if (points.length < 2) return;
-    roadMeshes.push(ribbon(scene, points, width, '#8a9495', (x, z) => terrainHeight(x, z) + 0.17, roadMaterial));
+    roadMeshes.push(ribbon(scene, points, width, '#6c7e89', (x, z) => terrainHeight(x, z) + 0.17, roadMaterial));
+    if (width >= 6) sidewalkMeshes.push(ribbon(scene, points, width + 2.6, '#bbc2b7', (x, z) => terrainHeight(x, z) + 0.10, sidewalkMaterial));
   }
 
   // Streets follow the same terrain as walking and taper into rural lanes near the foothills.
@@ -137,36 +98,50 @@ export function createCity({ scene, box, collision }) {
   ring.push(ring[0]);
   addStreet(ring, 16);
 
-  // Dense inner neighborhoods fade irregularly into villages, fields and wooded slopes.
+  // Larger, physically proportioned homes on serviced plots, with access lanes between inner lots.
   for (let bx = -3672; bx <= 3672; bx += CITY.blockSize) {
     for (let bz = -3672; bz <= 3672; bz += CITY.blockSize) {
-      for (const ox of [-54, -18, 18, 54]) for (const oz of [-54, -18, 18, 54]) {
-        const { x, z } = streetPosition(bx + ox + (random() - 0.5) * 5, bz + oz + (random() - 0.5) * 5);
+      if (settlementDensity(bx, bz) > .28) {
+        for (const orientation of [0, 1]) {
+          let lane = [];
+          for (let t = -72; t <= 72; t += 12) {
+            const { x, z } = streetPosition(bx + (orientation ? t : 0), bz + (orientation ? 0 : t));
+            if (!streetAllowed(x, z) || nearRing(x, z, 15)) { addStreet(lane, 3.4);lane = [];continue; }
+            lane.push([x, z]);
+          }
+          addStreet(lane, 3.4);
+        }
+      }
+      for (const ox of [-46, -15, 15, 46]) for (const oz of [-46, -15, 15, 46]) {
+        const rawX = bx + ox + (random() - .5) * 2, rawZ = bz + oz + (random() - .5) * 2;
+        const { x, z } = streetPosition(rawX, rawZ);
         if (random() > settlementDensity(x, z)) continue;
         const elevation = terrainHeight(x, z);
-        if (elevation > 46 || inCampus(x, z, 25) || inRiver(x, z, 40) || forestAt(x, z, 18) || nearRing(x, z, 27)) continue;
-        const midrise = Math.abs(x) < 1050 && z > 620 && !inRiver(x, z, 170) && random() < 0.24;
-        const w = midrise ? 18 + random() * 6 : 11 + random() * 7;
-        const d = midrise ? 17 + random() * 6 : 12 + random() * 6;
-        const h = midrise ? 16 + random() * 23 : 6 + random() * 5;
-        const rotation = random() > 0.5 ? Math.PI / 2 : 0;
-        const cornerHeights = [-1, 1].flatMap(sx => [-1, 1].map(sz => terrainHeight(x + sx * 12, z + sz * 12)));
+        if (elevation > 46 || inCampus(x, z, 30) || inRiver(x, z, 48) || forestAt(x, z, 18) || nearRing(x, z, 32)) continue;
+        const midrise = Math.abs(x) < 1200 && z > 620 && !inRiver(x, z, 180) && random() < .27;
+        const previousW = midrise ? 18 + random() * 6 : 11 + random() * 7;
+        const previousD = midrise ? 17 + random() * 6 : 12 + random() * 6;
+        const previousH = midrise ? 16 + random() * 23 : 6 + random() * 5;
+        const dimensions = buildingDimensions(previousW, previousD, previousH, midrise);
+        const { w, d, h, floors } = dimensions;
+        const rotation = facesNearestStreet(rawX - bx, rawZ - bz);
+        const footprint = orientedFootprint(w, d, rotation, ARCHITECTURE.balconyDepth + .1);
+        if (!fitsStreetLot(rawX, rawZ, bx, bz, footprint) || collision.overlapsBox(x, z, footprint.w, footprint.d)) continue;
+        const cornerHeights = [-1, 1].flatMap(sx => [-1, 1].map(sz => terrainHeight(x + sx * footprint.w / 2, z + sz * footprint.d / 2)));
         if (Math.max(...cornerHeights) - Math.min(...cornerHeights) > 1.8) continue;
         const foundation = Math.max(elevation, ...cornerHeights);
-        const color = pick(walls);
-        bodies.push({ x, z, y: foundation + h / 2, w, h, d, rotation, color });
-        const roof = { x, z, y: foundation + h, w: w + 1.1, h: 2.8 + random() * 2, d: d + 1.1, rotation, color: pick(roofs) };
-        if (midrise || random() < 0.18) flatRoofs.push({ ...roof, y: foundation + h + 0.25, h: 0.5, color: '#bec7c8' });
-        else roofEntries.push(roof);
-        collision.add({ x, z, w: rotation ? d : w, d: rotation ? w : d });
-        lots.push({ x, z, w, d, h, color, midrise });
+        const color = pick(ARCHITECTURE.walls), roofColor = pick(ARCHITECTURE.roofs);
+        const choice = random();
+        const roofKind = midrise || (floors >= 4 && choice < .65) ? 'flat' : choice < .48 ? 'gable' : choice < .86 ? 'hip' : 'flat';
+        const roofHeight = roofKind === 'flat' ? .7 : 2.8 + random() * 1.6;
+        const lot = { x, z, w, d, h, foundation, floors, color, roofColor, roofKind, roofHeight, rotation, midrise, previousW, previousD };
+        architecture.add(lot);
+        collision.add({ x, z, w: footprint.w, d: footprint.d });
+        lots.push(lot);
       }
     }
   }
-  const facade = facadeMaterial();
-  instances(scene, unitBox, [facade, facade, plaster, plaster, facade, facade], bodies);
-  instances(scene, gableGeometry(), plaster, roofEntries);
-  instances(scene, unitBox, plaster, flatRoofs);
+  architecture.finish();
   instances(scene, unitBox, plaster, markings, false);
   // Merge terrain-following streets so extending the city does not add hundreds of draw calls.
   scene.remove(...roadMeshes);
@@ -174,6 +149,9 @@ export function createCity({ scene, box, collision }) {
   streets.name = 'Terrain-following urban streets';
   streets.receiveShadow = true;
   scene.add(streets);
+  scene.remove(...sidewalkMeshes);
+  const sidewalks = new THREE.Mesh(mergeGeometries(sidewalkMeshes.map(mesh => mesh.geometry)), sidewalkMaterial);
+  sidewalks.receiveShadow = true;scene.add(sidewalks);
 
   function addTree(x, z, scale = 1) {
     const y = terrainHeight(x, z), height = (7 + random() * 4) * scale;
@@ -265,5 +243,5 @@ export function createCity({ scene, box, collision }) {
     for (let lobe = 0; lobe < 5; lobe++) cloudEntries.push({ x: cx + lobe * 95, z: cz + random() * 60, y: 2100 + random() * 420, w: 90 + random() * 80, h: 35 + random() * 38, d: 70 + random() * 45, color: '#ffffff' });
   }
   const clouds = instances(scene, new THREE.SphereGeometry(1, 9, 6), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.86, depthWrite: false }), cloudEntries, false);
-  return { lots, trees: foliage.length, clouds, terrain, roads: roadMeshes.length, fields: fieldGeometries.length, bridges: CITY.bridges.length, bounds: CITY.halfSize };
+  return { lots, architecture, trees: foliage.length, clouds, terrain, roads: roadMeshes.length, fields: fieldGeometries.length, bridges: CITY.bridges.length, bounds: CITY.halfSize };
 }

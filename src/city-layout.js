@@ -118,12 +118,37 @@ export function terrainHeight(x, z) {
   return foothillHeight(x, z) + lookoutTerrainHeight(x, z);
 }
 
+export function pavedSurfaceOffset(x, z) {
+  if (ringDistance(x, z) < 8) return .17;
+  if (basinRadius(x, z) >= 1.04 || terrainHeight(x, z) >= 39 || inCampus(x, z, 8) || inRiver(x, z, 16) || forestAt(x, z, -40)) return 0;
+  let rawX = x, rawZ = z;
+  for (let i = 0; i < 3; i++) {
+    const warped = streetPosition(rawX, rawZ);
+    rawX += x - warped.x;rawZ += z - warped.z;
+  }
+  let offset = 0;
+  for (const value of [rawX, rawZ]) {
+    const gridLine = Math.round(value / CITY.blockSize) * CITY.blockSize;
+    const halfWidth = Math.abs(gridLine % 1008) < .01 ? 9 : 3;
+    const distance = Math.abs(value - gridLine);
+    if (distance < halfWidth) return .17;
+    if (distance < halfWidth + 1.3) offset = .10;
+  }
+  const blockX = 72 + Math.round((rawX - 72) / 144) * 144;
+  const blockZ = 72 + Math.round((rawZ - 72) / 144) * 144;
+  if (settlementDensity(blockX, blockZ) > .28 && ringDistance(x, z) > 15
+      && (Math.abs(rawX - blockX) < 1.7 || Math.abs(rawZ - blockZ) < 1.7)) return .17;
+  return offset;
+}
+
 export function groundHeight(x, z) {
-  if (onBridge(x) && Math.abs(z - riverZ(x)) < CITY.bridgeLength / 2) return 0.65;
+  if (onBridge(x) && Math.abs(z - riverZ(x)) < CITY.bridgeLength / 2) return CITY.bridges.some(b => Math.abs(x - b) > 7 && Math.abs(x - b) < 9) ? .79 : .65;
   if (Math.abs(x - BASE.x) < BASE.width * BASE.scale / 2 + 1.5 * BASE.scale
       && Math.abs(z - BASE.z) < BASE.depth * BASE.scale / 2 + 1.5 * BASE.scale) return BASE.floorHeight * BASE.scale;
-  // The viewpoint sits directly on the continuous landscape, with no separate hill tile.
-  return terrainHeight(x, z);
+  // Count paved surfaces and the lookout platform when setting the person's eye height.
+  const lookout = CITY.lookout;
+  if (Math.abs(x - lookout.x) < 12.5 && Math.abs(z - lookout.z) < 7) return terrainHeight(lookout.x, lookout.z) + .25;
+  return terrainHeight(x, z) + pavedSurfaceOffset(x, z);
 }
 
 // Spatial bins keep walking checks independent of the total building count.
@@ -146,12 +171,23 @@ export function createCollisionIndex() {
     const nearby = bins.get(`${Math.floor(x / cellSize)},${Math.floor(z / cellSize)}`) ?? [];
     return nearby.some(b => Math.abs(x - b.x) < b.w && Math.abs(z - b.z) < b.d);
   }
+  function overlapsBox(x, z, w, d) {
+    const halfW = w / 2, halfD = d / 2;
+    for (let gx = Math.floor((x - halfW) / cellSize); gx <= Math.floor((x + halfW) / cellSize); gx++) {
+      for (let gz = Math.floor((z - halfD) / cellSize); gz <= Math.floor((z + halfD) / cellSize); gz++) {
+        for (const b of bins.get(`${gx},${gz}`) ?? []) {
+          if (Math.abs(x - b.x) < halfW + b.w && Math.abs(z - b.z) < halfD + b.d) return true;
+        }
+      }
+    }
+    return false;
+  }
   function blocked(x, z) {
     if (basinRadius(x, z) > CITY.walkRadius) return true;
     if (inRiver(x, z, 0.7) && !onBridge(x)) return true;
     return hasObstacle(x, z);
   }
-  return { add, blocked, hasObstacle, get count() { return count; } };
+  return { add, blocked, hasObstacle, overlapsBox, get count() { return count; } };
 }
 
 export function seededRandom(initial = 20261022) {
