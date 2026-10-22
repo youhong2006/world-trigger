@@ -12,25 +12,63 @@ export const BASE = {
   floorHeight: 1.1,
 };
 export const CITY = {
-  halfSize: 1120,
-  blockSize: 72,
-  riverWidth: 58,
-  bridges: [-504, 0, 504],
+  halfSize: 3700,
+  basinX: 3400,
+  basinZ: 3000,
+  terrainRadius: 18000,
+  walkRadius: 1.48,
+  blockSize: 144,
+  riverWidth: 86,
+  bridgeLength: 164,
+  bridges: [-1008, 0, 1008],
   campus: { minX: -770, maxX: 770, minZ: -680, maxZ: 415 },
   ring: { minX: -820, maxX: 820, minZ: -730, maxZ: 455, radius: 100 },
-  lookout: { x: -985, z: 120, rx: 115, rz: 135 },
+  lookout: { x: -2200, z: 120, rx: 220, rz: 200 },
   forests: [
-    { x: -980, z: 265, rx: 120, rz: 135 },
-    { x: 980, z: 195, rx: 115, rz: 145 },
-    { x: -955, z: -430, rx: 110, rz: 205 },
-    { x: 975, z: -440, rx: 110, rz: 180 },
-    { x: -260, z: 830, rx: 175, rz: 100 },
-    { x: 750, z: 875, rx: 230, rz: 115 },
+    { x: -1750, z: 530, rx: 390, rz: 260 },
+    { x: 1800, z: 430, rx: 380, rz: 310 },
+    { x: -1850, z: -1500, rx: 330, rz: 360 },
+    { x: 1700, z: -1500, rx: 400, rz: 260 },
+    { x: -720, z: 2350, rx: 350, rz: 210 },
+    { x: 1920, z: 2260, rx: 430, rz: 280 },
   ],
 };
 
+const smooth = (a, b, x) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+// A continuous asymmetric basin, rather than a rectangular cutoff.
+export function basinRadius(x, z) {
+  const angle = Math.atan2(z / CITY.basinZ, x / CITY.basinX);
+  const edge = 1 + 0.075 * Math.sin(angle * 3 + 0.6) + 0.045 * Math.sin(angle * 5 - 0.9) + 0.025 * Math.cos(angle * 8);
+  return Math.hypot(x / CITY.basinX, z / CITY.basinZ) / edge;
+}
+
 export function riverZ(x) {
-  return 554 + 32 * Math.sin(x / 290) + 0.026 * x;
+  return 1250 + 210 * Math.tanh(x / 1300) + 125 * Math.sin(x / 700) + 0.07 * x;
+}
+
+export function settlementDensity(x, z) {
+  const r = basinRadius(x, z);
+  const edgeFade = 1 - smooth(0.53, 1.06, r);
+  const neighborhood = 0.82 + 0.14 * Math.sin(x / 320 + Math.cos(z / 470)) * Math.cos(z / 380);
+  return edgeFade * neighborhood;
+}
+
+export function foothillHeight(x, z) {
+  const r = basinRadius(x, z);
+  const angle = Math.atan2(z, x);
+  const foothills = 62 * smooth(0.57, 1.05, r);
+  const foothillVariation = 0.5 + 0.25 * Math.sin(x / 240 + 0.6) * Math.cos(z / 310) + 0.17 * Math.sin((x + z) / 410);
+  const mountainRise = smooth(0.93, 1.36, r);
+  const distantFall = 1 - smooth(2.0, 3.9, r) * 0.3;
+  const ridge = 420 + 240 * Math.sin(angle * 5 + 0.8) ** 2 + 180 * Math.cos(angle * 9 - 0.4) ** 2;
+  const detail = 0.84 + 0.1 * Math.sin(x / 190) * Math.cos(z / 260) + 0.06 * Math.sin((x + z) / 115);
+  // The river continues through a valley in the mountain ring, without a blue stripe over hilltops.
+  const valley = smooth(CITY.riverWidth / 2 + 30, 310, Math.abs(z - riverZ(x)));
+  return (foothills * foothillVariation + mountainRise * ridge * detail * distantFall) * valley;
 }
 
 export function inCampus(x, z, margin = 0) {
@@ -47,7 +85,10 @@ export function ringDistance(x, z) {
 }
 
 export function forestAt(x, z, margin = 0) {
-  return CITY.forests.find(f => ((x - f.x) / (f.rx + margin)) ** 2 + ((z - f.z) / (f.rz + margin)) ** 2 < 1);
+  return CITY.forests.find(f => {
+    const radius = ((x - f.x) / (f.rx + margin)) ** 2 + ((z - f.z) / (f.rz + margin)) ** 2;
+    return radius < 1 + 0.12 * Math.sin(x / 70) * Math.cos(z / 85);
+  });
 }
 
 export function inRiver(x, z, margin = 0) {
@@ -59,27 +100,30 @@ export function onBridge(x) {
 }
 
 export function streetPosition(x, z) {
-  const outer = Math.min(1, Math.max(0, (Math.hypot(x, z) - 250) / 650));
+  const outer = smooth(850, 2700, Math.hypot(x, z));
   return {
-    x: x + outer * 24 * Math.sin(z / 145) * Math.sin(Math.PI * x / 504) ** 2,
-    z: z + outer * 20 * Math.sin(x / 140) * Math.sin(Math.PI * z / 504) ** 2,
+    x: x + outer * 58 * Math.sin(z / 340) * Math.sin(Math.PI * x / 1008) ** 2,
+    z: z + outer * 48 * Math.sin(x / 320) * Math.sin(Math.PI * z / 1008) ** 2,
   };
 }
 
 export function lookoutTerrainHeight(x, z) {
   const dx = x - CITY.lookout.x, dz = z - CITY.lookout.z;
   const crest = Math.max(0, 1 - (dx / CITY.lookout.rx) ** 2 - (dz / CITY.lookout.rz) ** 2);
-  return Math.max(0, crest * crest * 29 * (1 + 0.12 * Math.sin(dx * 0.031 + 120) * Math.cos(dz * 0.025)) - 1);
+  return 44 * crest * crest;
+}
+
+export function terrainHeight(x, z) {
+  if (inCampus(x, z, 20)) return 0;
+  return foothillHeight(x, z) + lookoutTerrainHeight(x, z);
 }
 
 export function groundHeight(x, z) {
-  if (onBridge(x) && Math.abs(z - riverZ(x)) < 53) return 0.65;
+  if (onBridge(x) && Math.abs(z - riverZ(x)) < CITY.bridgeLength / 2) return 0.65;
   if (Math.abs(x - BASE.x) < BASE.width * BASE.scale / 2 + 1.5 * BASE.scale
       && Math.abs(z - BASE.z) < BASE.depth * BASE.scale / 2 + 1.5 * BASE.scale) return BASE.floorHeight * BASE.scale;
-  // A walkable path winds up the western lookout hill.
-  if (Math.abs(x - CITY.lookout.x) < 8 && z > 120 && z < 265) return Math.min(29, (265 - z) * 0.2);
-  if (Math.hypot((x - CITY.lookout.x) / 32, (z - 120) / 30) < 1) return 29;
-  return lookoutTerrainHeight(x, z);
+  // The viewpoint sits directly on the continuous landscape, with no separate hill tile.
+  return terrainHeight(x, z);
 }
 
 // Spatial bins keep walking checks independent of the total building count.
@@ -98,12 +142,16 @@ export function createCollisionIndex() {
     }
     count++;
   }
-  function blocked(x, z) {
-    if (inRiver(x, z, 0.7) && !onBridge(x)) return true;
+  function hasObstacle(x, z) {
     const nearby = bins.get(`${Math.floor(x / cellSize)},${Math.floor(z / cellSize)}`) ?? [];
     return nearby.some(b => Math.abs(x - b.x) < b.w && Math.abs(z - b.z) < b.d);
   }
-  return { add, blocked, get count() { return count; } };
+  function blocked(x, z) {
+    if (basinRadius(x, z) > CITY.walkRadius) return true;
+    if (inRiver(x, z, 0.7) && !onBridge(x)) return true;
+    return hasObstacle(x, z);
+  }
+  return { add, blocked, hasObstacle, get count() { return count; } };
 }
 
 export function seededRandom(initial = 20261022) {

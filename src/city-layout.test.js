@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CITY, BASE, riverZ, ringDistance, createCollisionIndex, groundHeight, streetPosition, inCampus } from './city-layout.js';
+import { CITY, BASE, basinRadius, terrainHeight, settlementDensity, riverZ, ringDistance, createCollisionIndex, groundHeight, streetPosition, inCampus } from './city-layout.js';
 
 test('all three bridges permit crossing while the water between them blocks walking', () => {
   const collision = createCollisionIndex();
@@ -23,16 +23,15 @@ test('building collision spans spatial bins and handles negative coordinates', (
   assert.equal(collision.blocked(-49, -140), false);
 });
 
-test('lookout ramp connects the street to a walkable raised platform', () => {
-  assert.equal(groundHeight(CITY.lookout.x, 265), 0);
-  assert.equal(groundHeight(CITY.lookout.x, 200), 13);
-  assert.equal(groundHeight(CITY.lookout.x, 120), 29);
+test('walking and the viewpoint use the same continuous terrain as the rendered landscape', () => {
+  assert.ok(groundHeight(CITY.lookout.x, CITY.lookout.z) >= 44);
+  for (const z of [120, 160, 200, 265]) assert.equal(groundHeight(CITY.lookout.x, z), terrainHeight(CITY.lookout.x, z));
   assert.equal(groundHeight(0, riverZ(0)), 0.65);
   assert.equal(groundHeight(0, 460), 0);
 });
 
 test('organic streets preserve bridge axes and leave the base approach outside the campus', () => {
-  for (const x of CITY.bridges) assert.equal(streetPosition(x, 504).x, x);
+  for (const x of CITY.bridges) assert.equal(streetPosition(x, 1008).x, x);
   assert.equal(inCampus(0, -150), true);
   assert.equal(inCampus(0, 460), false);
 });
@@ -55,4 +54,37 @@ test('the south perimeter and base walking spawn remain clear of the river', () 
   assert.equal(inCampus(-504, 720), false);
   assert.equal(inCampus(CITY.lookout.x, CITY.lookout.z), false);
   assert.equal(groundHeight(0, 460), 0);
+});
+
+
+test('the enlarged basin has an irregular nonrectangular edge and a gradual density falloff', () => {
+  assert.ok(CITY.basinX > 3000 && CITY.basinZ >= 3000);
+  assert.ok(basinRadius(3300, 0) < 1.1);
+  assert.ok(basinRadius(3300, 2900) > 1.2);
+  assert.ok(settlementDensity(1100, 0) > settlementDensity(2800, 0));
+  assert.equal(settlementDensity(5000, 5000), 0);
+  const collision = createCollisionIndex();
+  assert.equal(collision.blocked(6000, 0), true);
+});
+
+test('the relocated river remains a clear valley even through the enclosing mountains', () => {
+  assert.equal(riverZ(0), 1250);
+  assert.ok(riverZ(-2500) < riverZ(2500));
+  for (let x = -6000; x <= 6000; x += 200) assert.ok(terrainHeight(x, riverZ(x)) < 0.01);
+});
+
+test('foothills rise around the basin without square tile seams or abrupt height steps', () => {
+  let mountainDirections = 0;
+  for (let i = 0; i < 24; i++) {
+    const a = i / 24 * Math.PI * 2;
+    const x = Math.cos(a) * CITY.basinX * 1.4, z = Math.sin(a) * CITY.basinZ * 1.4;
+    const h = terrainHeight(x, z);
+    if (h > 200) mountainDirections++;
+    assert.ok(Math.abs(terrainHeight(x + .1, z) - h) < 2);
+    assert.ok(Math.abs(terrainHeight(x, z + .1) - h) < 2);
+  }
+  assert.ok(mountainDirections >= 20, 'Mountains must enclose the basin on all sides apart from river valleys');
+  for (const x of [-1180, 1180, -3100, 3100]) {
+    assert.ok(Math.abs(terrainHeight(x + .01, 1700) - terrainHeight(x - .01, 1700)) < .5);
+  }
 });
