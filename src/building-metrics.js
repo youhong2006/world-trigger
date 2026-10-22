@@ -1,5 +1,5 @@
 // All dimensions use the same metres as walking, doorways and the city terrain.
-export const PERSON = { eyeHeight: 1.68, walkSpeed: 2.2, sprintSpeed: 6.2, walkingFov: 62 };
+export const PERSON = { height: 1.75, eyeHeight: 1.63, crouchHeight: 1.05, crouchEyeHeight: .95, walkSpeed: 2.2, sprintSpeed: 6.2, walkingFov: 62 };
 export const ARCHITECTURE = {
   previousFootprintScale: 1.35,
   enlargement: 1.25,

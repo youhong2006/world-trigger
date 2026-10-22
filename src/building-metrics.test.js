@@ -33,5 +33,5 @@ test('human eye height is measured from the paved street instead of the terrain 
   assert.ok(Math.abs(streetHeight - terrainHeight(-1008, 1080) - streetElevation(STREETS.arterialWidth)) < 1e-8);
   const eye = streetHeight + PERSON.eyeHeight;
   assert.ok(Math.abs(eye - (streetElevation(STREETS.arterialWidth) + PERSON.eyeHeight)) < 1e-8);
-  assert.ok(Math.abs((eye - streetHeight) - 1.68) < 1e-8);
+  assert.ok(Math.abs((eye - streetHeight) - 1.63) < 1e-8);
 });

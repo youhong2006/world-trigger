@@ -1,18 +1,26 @@
-# Playable human avatar
+# Adult anime exploration avatar
 
-- Model: **Rogue**, from **KayKit – Character Pack: Adventurers 1.0**.
-- Author: **Kay Lousberg / KayKit** — https://kaylousberg.com/
-- License: **Creative Commons Zero 1.0 Universal (CC0)**. Free for personal, educational and commercial use; attribution is optional. The creator's original license text is included in [LICENSE.txt](LICENSE.txt).
-- Official pack and license statement: https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0
-- Pack page: https://kaylousberg.itch.io/kaykit-adventurers
-- Source revision: `672074b73ba276876a19e8816ecdc5241817ab47`
-- Original file: https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0/blob/672074b73ba276876a19e8816ecdc5241817ab47/addons/kaykit_character_pack_adventures/Characters/gltf/Rogue.glb
-- Original license: https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0/blob/672074b73ba276876a19e8816ecdc5241817ab47/LICENSE.txt
+## Model — CC0
 
-## Adaptations in this project
+- Base model: **HairSample_Male**, a VRoid Studio beta male example distributed by **pixiv / VRoid Studio**.
+- License: **CC0 1.0 Universal**. The original VRM's embedded metadata explicitly sets `licenseName: CC0`, allows everyone, and permits commercial use. A copy of the original metadata and source hashes is in [SOURCE-METADATA.json](SOURCE-METADATA.json).
+- Source mirror: https://github.com/madjin/vrm-samples/blob/e16eb187100149a315ad92c3c9968f1d5baa6c7d/vroid/beta/HairSample_Male.vrm
+- VRoid Studio's sample model licensing explanation: https://vroid.pixiv.help/hc/en-us/articles/4402614652569-Do-VRoid-Studio-s-sample-models-come-with-conditions-of-use-
+- The source repository distinguishes these older CC0 samples from the newer AvatarSample_A/B/C assets with separate terms. This project uses HairSample_Male.
 
-`rogue.glb` preserves the original mesh, skin, bones and embedded texture. It retains eight useful clips (Idle, Unarmed_Idle, Walking_A, Running_A, Jump_Start, Jump_Idle, Jump_Land and Sit_Chair_Pose); unused animation data was removed, reducing the file from 3,616,284 to 633,856 bytes. The browser hides accessory weapons, sets standing height to 1.8 metres, removes root motion, blends clips, and adds a bone-based crouching pose. Crouch walking combines bent knees/hips with an animated gait.
+## Animation — CC0
 
-The included avatar is a provisional exploration character, not a World Trigger character. All assets are served from this repository; no account, external CDN, API key or runtime asset service is required.
+- Author: **Quaternius**.
+- Pack: **Universal Animation Library, Standard / FREE version**.
+- Official page: https://quaternius.itch.io/universal-animation-library
+- Source mirror: https://github.com/J-Ponzo/gltf-universal-animation-library/tree/e24c23cf2a1323488a3faa226ea7ea21f644b73e
+- Original CC0 license: https://github.com/J-Ponzo/gltf-universal-animation-library/blob/e24c23cf2a1323488a3faa226ea7ea21f644b73e/LICENSE
+- Included motions: Idle_Loop, Walk_Loop, Sprint_Loop, Jump_Start, Jump_Loop, Jump_Land, Crouch_Idle_Loop, Crouch_Fwd_Loop.
 
-If the file cannot be loaded, the app displays an original, locally generated skinned humanoid with the same movement states, so third-person controls remain usable.
+## Adaptations
+
+The model and selected motions are retargeted into `adult-explorer.glb`. Root travel is removed so the game controller determines position. Unused VRM extensions, thumbnail and normal/matcap textures are removed; base textures are packaged as WebP at up to 1024 pixels. Normals are retained for toon lighting. The model's humanoid bone mapping is preserved in scene metadata.
+
+The game sets standing height to approximately **1.75 metres**, uses grey-purple hair and a dark uniform, and adds an original skinned split coat and grey trim. Crouching includes a small additive torso adjustment for low clearance. This is an adapted, generic exploration character inspired by the supplied clothing reference, not the pictured original character.
+
+All model textures and animation are served locally from this repository. No avatar account, runtime CDN or API key is needed. CC0 legal text is in [LICENSE.txt](LICENSE.txt).

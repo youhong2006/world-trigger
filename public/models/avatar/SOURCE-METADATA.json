@@ -1,0 +1,31 @@
+{
+  "model": {
+    "source": "https://github.com/madjin/vrm-samples",
+    "revision": "e16eb187100149a315ad92c3c9968f1d5baa6c7d",
+    "file": "vroid/beta/HairSample_Male.vrm",
+    "sha256": "7aeca142dabbc26ba0f5b9c998c8f3cb6df341287d67788427ac837223785a3f",
+    "originalMetadata": {
+      "version": "",
+      "author": "",
+      "contactInformation": "",
+      "reference": "",
+      "title": "HairSample_Male",
+      "texture": 24,
+      "allowedUserName": "Everyone",
+      "violentUssageName": "Allow",
+      "sexualUssageName": "Allow",
+      "commercialUssageName": "Allow",
+      "otherPermissionUrl": "",
+      "licenseName": "CC0",
+      "otherLicenseUrl": ""
+    }
+  },
+  "animation": {
+    "author": "Quaternius",
+    "license": "CC0-1.0",
+    "source": "https://github.com/J-Ponzo/gltf-universal-animation-library",
+    "revision": "e24c23cf2a1323488a3faa226ea7ea21f644b73e",
+    "gltfSha256": "0ff075c7ad6855c5c2c37a171592ee8f0d6ab2f58259e2be77a9b63dd8027765",
+    "bufferSha256": "6e65377d81558333c4093dbb144a48fd19019343d82b1a3a7992a98ec0e0543c"
+  }
+}

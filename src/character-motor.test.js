@@ -87,8 +87,8 @@ test('crouch lowers the body, slows movement and waits for headroom before stand
   assert.ok(Math.abs(motor.speed - 1.15) < .001);
   motor.update(1 / 60, {});
   assert.equal(motor.crouched, false);
-  assert.equal(motor.eyeHeight, 1.68);
-  assert.equal(motor.height, 1.8);
+  assert.equal(motor.eyeHeight, 1.63);
+  assert.equal(motor.height, 1.75);
 });
 
 test('small curbs are stepped onto while higher barriers need a jump and can support a landing', () => {

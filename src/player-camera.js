@@ -1,4 +1,5 @@
 import { Vector3, MathUtils } from 'three';
+import { PERSON } from './building-metrics.js';
 
 const RADIUS = .24;
 const WALL_MARGIN = .035;
@@ -64,7 +65,7 @@ export function createPlayerCamera({ camera, collision, groundHeight }) {
     return mode;
   }
 
-  function update(dt, { position, eyeHeight = 1.68, yaw = 0, pitch = 0 }) {
+  function update(dt, { position, eyeHeight = PERSON.eyeHeight, yaw = 0, pitch = 0 }) {
     projection();
     const viewPitch = MathUtils.clamp(pitch, -Math.PI / 2 + .06, Math.PI / 2 - .06);
     camera.rotation.order = 'YXZ';

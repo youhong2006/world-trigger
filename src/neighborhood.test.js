@@ -63,7 +63,7 @@ test('planned buildings gain exactly 25 percent in footprint while doors and peo
     if (lot.midrise) apartments++; else houses++;
   }
   assert.ok(houses > 0 && apartments > 0, 'exercise both residential and apartment parcel plans');
-  assert.equal(PERSON.eyeHeight, 1.68);
+  assert.equal(PERSON.eyeHeight, 1.63);
   assert.equal(ARCHITECTURE.doorHeight, 2.1);
   assert.equal(ARCHITECTURE.doorWidth, 1);
 });

@@ -1,16 +1,14 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { PERSON } from './building-metrics.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const MODEL = {
-  name: 'KayKit Rogue · exploration avatar',
-  author: 'Kay Lousberg / KayKit',
-  license: 'CC0 1.0 Universal',
-  source: 'https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0',
-  height: 1.8,
+  name: 'VRoid adult exploration avatar', author: 'VRoid Studio / pixiv; animation by Quaternius',
+  license: 'CC0 1.0 Universal', source: 'https://github.com/madjin/vrm-samples/tree/master/vroid/beta',
+  height: PERSON.height,
 };
-const WEAPONS = new Set(['Knife', 'Knife_Offhand', '1H_Crossbow', '2H_Crossbow', 'Throwable', 'Rogue_Cape']);
-const CLIPS = { idle: 'Idle', walk: 'Walking_A', run: 'Running_A', jump: 'Jump_Start', fall: 'Jump_Idle', land: 'Jump_Land', crouch: 'Idle', 'crouch-walk': 'Idle' };
+const CLIPS = { idle: 'Idle_Loop', walk: 'Walk_Loop', run: 'Sprint_Loop', jump: 'Jump_Start', fall: 'Jump_Loop', land: 'Jump_Land', crouch: 'Crouch_Idle_Loop', 'crouch-walk': 'Crouch_Fwd_Loop' };
 const clamp = THREE.MathUtils.clamp;
 
 // A complete local skeleton is available while the file loads, and remains a
@@ -48,21 +46,22 @@ function createFallback() {
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     pieces.push(geometry);
   }
-  piece('spine', new THREE.BoxGeometry(.39, .48, .25), 0, 1.16, 0, '#41616b');
-  piece('hips', new THREE.BoxGeometry(.35, .22, .24), 0, .87, 0, '#324857');
+  piece('spine', new THREE.BoxGeometry(.39, .48, .25), 0, 1.16, 0, '#171d28');
+  piece('hips', new THREE.BoxGeometry(.35, .22, .24), 0, .87, 0, '#141923');
   piece('head', new THREE.SphereGeometry(.145, 12, 9), 0, 1.64, 0, '#d9b497');
-  piece('head', new THREE.SphereGeometry(.149, 12, 5, 0, Math.PI * 2, 0, Math.PI * .48), 0, 1.665, 0, '#3c3c3c');
+  piece('head', new THREE.SphereGeometry(.149, 12, 5, 0, Math.PI * 2, 0, Math.PI * .48), 0, 1.665, 0, '#67627b');
   for (const [side, sign] of [['l', 1], ['r', -1]]) {
-    piece(`upperarm${side}`, new THREE.CylinderGeometry(.075, .07, .27, 8), sign * .27, 1.20, 0, '#41616b');
-    piece(`lowerarm${side}`, new THREE.CylinderGeometry(.065, .055, .25, 8), sign * .27, .94, 0, '#41616b');
+    piece(`upperarm${side}`, new THREE.CylinderGeometry(.075, .07, .27, 8), sign * .27, 1.20, 0, '#171d28');
+    piece(`lowerarm${side}`, new THREE.CylinderGeometry(.065, .055, .25, 8), sign * .27, .94, 0, '#171d28');
     piece(`hand${side}`, new THREE.BoxGeometry(.1, .13, .12), sign * .27, .79, 0, '#d9b497');
-    piece(`upperleg${side}`, new THREE.CylinderGeometry(.095, .075, .4, 8), sign * .13, .64, 0, '#324857');
-    piece(`lowerleg${side}`, new THREE.CylinderGeometry(.075, .06, .36, 8), sign * .13, .25, 0, '#324857');
+    piece(`upperleg${side}`, new THREE.CylinderGeometry(.095, .075, .4, 8), sign * .13, .64, 0, '#141923');
+    piece(`lowerleg${side}`, new THREE.CylinderGeometry(.075, .06, .36, 8), sign * .13, .25, 0, '#141923');
     piece(`foot${side}`, new THREE.BoxGeometry(.15, .11, .27), sign * .13, .055, -.07, '#303b42');
   }
   const mesh = new THREE.SkinnedMesh(mergeGeometries(pieces), new THREE.MeshToonMaterial({ vertexColors: true }));
   mesh.name = 'Local skinned human fallback';mesh.add(hips);mesh.bind(new THREE.Skeleton(bones));
   mesh.castShadow = false;mesh.receiveShadow = true;mesh.frustumCulled = false;root.add(mesh);
+  root.scale.setScalar(PERSON.height / 1.8);
   const rest = new Map(bones.map(item => [item, item.position.clone()]));
   function update(time, state, crouch) {
     for (const item of bones) { item.position.copy(rest.get(item));item.rotation.set(0, 0, 0); }
@@ -87,60 +86,138 @@ function createFallback() {
   return { root, bones, update };
 }
 
-// The public heading contract matches the walking controller: 0 faces -Z and
-// PI/2 faces -X. KayKit's source faces +Z, so its visual child turns by PI.
+function animeMaterials(model) {
+  const cache = new Map();
+  const tones = new THREE.DataTexture(new Uint8Array([100, 162, 212, 255]), 4, 1, THREE.RedFormat);
+  tones.minFilter = tones.magFilter = THREE.NearestFilter;tones.needsUpdate = true;
+  function convert(original) {
+    if (cache.has(original)) return cache.get(original);
+    const hair = /HAIR/i.test(original.name), uniform = /Tops.*CLOTH/i.test(original.name);
+    const material = new THREE.MeshToonMaterial({
+      name: original.name, map: original.map, gradientMap: tones,
+      color: original.color?.clone() ?? new THREE.Color('white'),
+      side: original.side, transparent: original.transparent,
+      alphaTest: original.alphaTest, depthWrite: original.depthWrite,
+    });
+    if (hair) { material.transparent = false;material.alphaTest = .38;material.depthWrite = true; }
+    if (hair || uniform) {
+      material.onBeforeCompile = shader => {
+        shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+          float fabricLight = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+          ${hair ? 'diffuseColor.rgb = vec3(0.24, 0.215, 0.31) * (0.44 + 0.85 * sqrt(max(fabricLight, 0.0)));' : `
+          diffuseColor.rgb = vec3(0.012, 0.016, 0.023) * (0.45 + fabricLight * 0.55);
+          `}
+        `);
+      };
+      material.customProgramCacheKey = () => hair ? 'adult-slate-hair-v1' : 'adult-charcoal-uniform-v2';
+    }
+    cache.set(original, material);return material;
+  }
+  model.traverse(object => {
+    if (object.isMesh) {
+      if (!object.geometry.getAttribute('normal')) object.geometry.computeVertexNormals();
+      object.material = Array.isArray(object.material) ? object.material.map(convert) : convert(object.material);
+    }
+  });
+}
+
+// Original costume additions share the imported skeleton. Tail vertices blend
+// hips/thigh weights so the split coat follows the legs rather than staying rigid.
+function addUniformCoat(model, humanoid) {
+  const hips = model.getObjectByName(humanoid.hips);
+  let body;
+  model.traverse(object => { if (object.isSkinnedMesh && /Tops/.test(object.material?.name)) body = object; });
+  if (!body || !hips) return;
+  const skeleton = body.skeleton, positions = [], joints = [], weights = [], groups = [];
+  const origin = hips.getWorldPosition(new THREE.Vector3());
+  const boneIndex = name => skeleton.bones.indexOf(model.getObjectByName(humanoid[name]));
+  const hipIndex = boneIndex('hips');
+  function quad(vertices, bone, color = 0, blend = true, base = hipIndex) {
+    const start = positions.length / 3;
+    for (const i of [0, 1, 2, 0, 2, 3]) {
+      const v = vertices[i];positions.push(...v);
+      const lower = i === 2 || i === 3;
+      joints.push(base, bone, 0, 0);
+      const legWeight = blend && lower ? .65 : 0;
+      weights.push(1 - legWeight, legWeight, 0, 0);
+    }
+    groups.push([start, 6, color]);
+  }
+  for (const sign of [-1, 1]) {
+    const leg = boneIndex(sign < 0 ? 'leftUpperLeg' : 'rightUpperLeg');
+    if (leg < 0) continue;
+    const cx = origin.x, cy = origin.y, cz = origin.z;
+    const outer = sign * .205, inner = sign * .055, bottom = cy - .44;
+    // Two front panels, back panels and side seams leave the centre free.
+    quad([[cx+inner,cy-.06,cz-.15],[cx+outer,cy-.06,cz-.15],[cx+outer*1.1,bottom,cz-.14],[cx+inner,bottom,cz-.14]],leg);
+    quad([[cx,cy-.06,cz+.15],[cx+outer,cy-.06,cz+.15],[cx+outer*1.1,bottom,cz+.15],[cx+sign*.025,bottom,cz+.15]],leg);
+    quad([[cx+outer,cy-.06,cz-.15],[cx+outer,cy-.06,cz+.15],[cx+outer*1.1,bottom,cz+.15],[cx+outer*1.1,bottom,cz-.14]],leg);
+    quad([[cx+inner,cy-.06,cz-.153],[cx+inner+sign*.005,cy-.06,cz-.153],[cx+inner+sign*.005,bottom,cz-.143],[cx+inner,bottom,cz-.143]],leg,1);
+  }
+  const chest = boneIndex('upperChest');
+  if (chest >= 0) {
+    const shoulders = ['leftUpperArm', 'rightUpperArm'].map(name => model.getObjectByName(humanoid[name]).getWorldPosition(new THREE.Vector3()));
+    const center = model.getObjectByName(humanoid.upperChest).getWorldPosition(new THREE.Vector3());
+    center.y -= .075;center.z = origin.z + .145;
+    for (const shoulder of shoulders) {
+      shoulder.y -= .055;shoulder.z = center.z;
+      const dx = center.x - shoulder.x, dy = center.y - shoulder.y, length = Math.hypot(dx, dy);
+      const ox = -dy / length * .003, oy = dx / length * .003;
+      quad([[shoulder.x-ox,shoulder.y-oy,center.z],[shoulder.x+ox,shoulder.y+oy,center.z],
+        [center.x+ox,center.y+oy,center.z],[center.x-ox,center.y-oy,center.z]],chest,1,false,chest);
+    }
+  }
+  for (const side of ['left', 'right']) {
+    const wrist = model.getObjectByName(humanoid[side + 'Hand']).getWorldPosition(new THREE.Vector3());
+    const forearm = boneIndex(side + 'LowerArm');
+    if (forearm < 0) continue;
+    for (let i = 0; i < 12; i++) {
+      const a = i / 12 * Math.PI * 2, b = (i + 1) / 12 * Math.PI * 2;
+      const point = (angle, offset) => [wrist.x + offset, wrist.y + Math.cos(angle) * .051, wrist.z + Math.sin(angle) * .051];
+      quad([point(a,-.005),point(a,.005),point(b,.005),point(b,-.005)],forearm,1,false,forearm);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(joints, 4));
+  geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(weights, 4));
+  geometry.computeVertexNormals();for (const group of groups) geometry.addGroup(...group);
+  const coat = new THREE.SkinnedMesh(geometry, [
+    new THREE.MeshToonMaterial({ color: '#121822', side: THREE.DoubleSide }),
+    new THREE.MeshToonMaterial({ color: '#89909b', side: THREE.DoubleSide }),
+  ]);
+  coat.name = 'Original split uniform coat';model.add(coat);coat.bind(skeleton, body.bindMatrix.clone());
+  coat.castShadow = false;coat.receiveShadow = true;coat.frustumCulled = false;
+}
+
+// Source VRoid 0.x already faces -Z. Heading 0 faces -Z, PI/2 faces -X.
 export function createPlayerAvatar(scene) {
   const anchor = new THREE.Group();anchor.name = 'Playable humanoid';anchor.visible = false;scene.add(anchor);
   const visual = new THREE.Group();anchor.add(visual);
   const fallback = createFallback();visual.add(fallback.root);
-  const shadow = new THREE.Mesh(new THREE.CircleGeometry(.31, 24), new THREE.MeshBasicMaterial({ color: '#203529', transparent: true, opacity: .19, depthWrite: false }));
-  shadow.rotation.x = -Math.PI / 2;shadow.visible = false;shadow.renderOrder = 1;scene.add(shadow);
-  let model = null, mixer = null, active = '', action = null, clock = 0, crouch = 0, visibility = false, lastState = null;
-  const bones = new Map(), animatedPose = new Map(), actions = new Map(), feet = [];
-  const status = { model: MODEL.name, source: MODEL.source, author: MODEL.author, license: MODEL.license, loaded: false, loading: true, fallback: true, skinned: true, bones: fallback.bones.length, animations: [], active: 'idle', clip: 'procedural', height: MODEL.height, error: null };
-
-  function clipFor(state) { return CLIPS[state.animation] ?? CLIPS.idle; }
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(.29, 24), new THREE.MeshBasicMaterial({ color: '#203529', transparent: true, opacity: .19, depthWrite: false }));
+  shadow.rotation.x = -Math.PI / 2;shadow.visible = false;scene.add(shadow);
+  let model = null, mixer = null, action = null, active = '', clock = 0, crouch = 0, visibility = false, lastState = null;
+  const feet = [], actions = new Map(), poseBones = [], animatedPose = new Map();
+  const status = { model: MODEL.name, author: MODEL.author, source: MODEL.source, license: MODEL.license,
+    loaded: false, loading: true, fallback: true, skinned: true, bones: fallback.bones.length,
+    animations: [], active: 'idle', clip: 'procedural', height: PERSON.height, proportions: 'adult-anime', error: null };
   function setAction(state) {
-    const nextName = clipFor(state);
-    if (nextName !== active) {
-      const next = actions.get(nextName) ?? actions.get('Idle');
+    const name = CLIPS[state.animation] ?? CLIPS.idle;
+    if (name !== active) {
+      const next = actions.get(name) ?? actions.get(CLIPS.idle);
       if (!next) return;
-      const single = nextName === 'Jump_Start' || nextName === 'Jump_Land';
+      const single = name === 'Jump_Start' || name === 'Jump_Land';
       next.reset().setLoop(single ? THREE.LoopOnce : THREE.LoopRepeat, single ? 1 : Infinity);
       next.clampWhenFinished = single;next.enabled = true;next.setEffectiveWeight(1).play();
-      if (action && action !== next) next.crossFadeFrom(action, .15, false);
-      action = next;active = nextName;
+      if (action && action !== next) next.crossFadeFrom(action, .14, false);
+      active = name;action = next;
     }
     const speed = Math.max(0, state.speed ?? 0);
-    const rate = state.animation === 'walk' ? clamp(speed / 2.2, .65, 1.6) : state.animation === 'run' ? clamp(speed / 6.2, .75, 1.7) : state.animation === 'jump' ? 1.8 : state.animation === 'land' ? 1.65 : 1;
+    const rate = state.animation === 'walk' ? clamp(speed / PERSON.walkSpeed, .65, 1.6)
+      : state.animation === 'run' ? clamp(speed / PERSON.sprintSpeed, .75, 1.7)
+      : state.animation === 'crouch-walk' ? clamp(speed / 1.15, .6, 1.5) : 1;
     action?.setEffectiveTimeScale(rate);status.clip = active;
-  }
-  function restorePose() {
-    for (const [bone, pose] of animatedPose) { bone.position.copy(pose.position);bone.quaternion.copy(pose.quaternion);bone.scale.copy(pose.scale); }
-  }
-  function rememberPose() {
-    for (const bone of bones.values()) {
-      let pose = animatedPose.get(bone);
-      if (!pose) { pose = { position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), scale: new THREE.Vector3() };animatedPose.set(bone, pose); }
-      pose.position.copy(bone.position);pose.quaternion.copy(bone.quaternion);pose.scale.copy(bone.scale);
-    }
-  }
-  function poseCrouch(state) {
-    if (crouch < .001) return;
-    const moving = state.animation === 'crouch-walk', gait = moving ? Math.sin(clock * 7.5) * .16 : 0;
-    const hips = bones.get('hips');
-    if (hips) { hips.position.y -= .16 * crouch;hips.rotateX(.12 * crouch); }
-    // Deep hip/spine flexion keeps this stylised head within the 1.05m
-    // crouch capsule. Counter-rotate the neck so the gaze stays forward.
-    bones.get('spine')?.rotateX(1.35 * crouch);
-    bones.get('chest')?.rotateX(.85 * crouch);
-    bones.get('head')?.rotateX(-2.32 * crouch);
-    for (const [side, sign] of [['l', 1], ['r', -1]]) {
-      bones.get(`upperleg${side}`)?.rotateX((-1.02 + sign * gait) * crouch);
-      bones.get(`lowerleg${side}`)?.rotateX((1.77 - sign * gait) * crouch);
-      bones.get(`foot${side}`)?.rotateX(-.75 * crouch);
-      bones.get(`upperarm${side}`)?.rotateX(-.18 * crouch);
-    }
   }
   function alignFeet() {
     if (!model) return;
@@ -148,63 +225,73 @@ export function createPlayerAvatar(scene) {
     let minY = Infinity;
     for (const foot of feet) {
       foot.skeleton.update();foot.computeBoundingBox();
-      const bound = foot.boundingBox.clone().applyMatrix4(foot.matrixWorld);
-      minY = Math.min(minY, bound.min.y);
+      minY = Math.min(minY, foot.boundingBox.clone().applyMatrix4(foot.matrixWorld).min.y);
     }
     if (Number.isFinite(minY)) visual.position.y = anchor.position.y - minY;
   }
   function update(dt, state) {
-    lastState = state;clock += Math.min(Math.max(dt, 0), .1);
+    lastState = state;clock += Math.min(Math.max(dt, 0), .25);
     anchor.position.copy(state.position);anchor.rotation.y = state.heading ?? 0;
-    crouch = THREE.MathUtils.damp(crouch, state.crouched || state.animation?.startsWith('crouch') ? 1 : 0, 12, dt);
+    crouch = THREE.MathUtils.damp(crouch, state.crouched ? 1 : 0, 12, dt);
     status.active = state.animation ?? 'idle';
     if (mixer) {
-      restorePose();setAction(state);mixer.update(Math.min(dt, .1));rememberPose();poseCrouch(state);alignFeet();
-    } else {
-      fallback.update(clock, state, crouch);
-      fallback.root.position.y = 0;anchor.updateMatrixWorld(true);
-      const left = fallback.bones.find(bone => bone.name === 'footl');
-      const right = fallback.bones.find(bone => bone.name === 'footr');
+      for (const bone of poseBones) if (animatedPose.has(bone)) bone.quaternion.copy(animatedPose.get(bone));
+      setAction(state);mixer.update(Math.min(Math.max(dt, 0), .25));
+      for (const bone of poseBones) animatedPose.set(bone, bone.quaternion.clone());
+      // A deeper forward fold fits the imported adult crouch into the same
+      // low-clearance body volume, while counter-rotating the head for vision.
+      if (poseBones.length === 3) {
+        poseBones[0].rotateX(-.33 * crouch);poseBones[1].rotateX(-.22 * crouch);poseBones[2].rotateX(.55 * crouch);
+      }
+      alignFeet();
+    }
+    else {
+      fallback.update(clock, state, crouch);fallback.root.position.y = 0;anchor.updateMatrixWorld(true);
       const point = new THREE.Vector3();
-      const minY = Math.min(left.getWorldPosition(point).y, right.getWorldPosition(point).y);
-      fallback.root.position.y = anchor.position.y + .06 - minY;
+      const min = Math.min(...fallback.bones.filter(b => /^foot/.test(b.name)).map(b => b.getWorldPosition(point).y));
+      fallback.root.position.y = anchor.position.y + .06 * PERSON.height / 1.8 - min;
     }
     anchor.visible = visibility;
     shadow.position.set(state.position.x, (state.groundY ?? state.position.y) + .026, state.position.z);
     shadow.visible = visibility && !!state.grounded;
-    shadow.scale.setScalar(1 - crouch * .08);
   }
-  const ready = new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/avatar/rogue.glb`).then(gltf => {
-    model = gltf.scene;model.name = MODEL.name;
+  const ready = new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/avatar/adult-explorer.glb`).then(gltf => {
+    model = gltf.scene;model.name = MODEL.name;const humanoid = model.userData.humanoid;
+    if (!humanoid?.hips) throw new Error('Adult humanoid mapping missing');
+    for (const name of ['spine', 'chest', 'head']) {
+      const bone = model.getObjectByName(humanoid[name]);if (bone) poseBones.push(bone);
+    }
+    model.updateMatrixWorld(true);animeMaterials(model);addUniformCoat(model, humanoid);
+    let boneCount = 0;
     model.traverse(object => {
-      if (WEAPONS.has(object.name)) object.visible = false;
-      if (object.isBone) bones.set(object.name, object);
+      if (object.isBone) boneCount++;
       if (object.isMesh) { object.castShadow = false;object.receiveShadow = true;object.frustumCulled = false; }
-      if (object.isSkinnedMesh && /^Rogue_Leg/.test(object.name)) feet.push(object);
+      if (object.isSkinnedMesh && /Shoes/i.test(object.material?.name)) feet.push(object);
     });
     mixer = new THREE.AnimationMixer(model);
-    for (const clip of gltf.animations) {
-      const inPlace = clip.clone();
-      inPlace.tracks = inPlace.tracks.filter(track => !/^(?:root|Rig)\.(?:position|quaternion)$/.test(track.name));
-      actions.set(clip.name, mixer.clipAction(inPlace));
+    for (const clip of gltf.animations) actions.set(clip.name, mixer.clipAction(clip));
+    const idle = actions.get(CLIPS.idle);if (!idle || !feet.length) throw new Error('Missing locomotion animation or foot skin');
+    idle.play();action = idle;active = CLIPS.idle;
+    // Calibrate the full idle breathing cycle once, including hair and soles.
+    // The imported asset's unit convention never determines gameplay height.
+    let height = 0;
+    for (let sample = 0; sample < 12; sample++) {
+      mixer.setTime(idle.getClip().duration * sample / 12);model.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(model, true);
+      height = Math.max(height, bounds.max.y - bounds.min.y);
     }
-    const idle = actions.get('Idle');idle.play();mixer.update(.001);active = 'Idle';action = idle;
-    model.updateMatrixWorld(true);
-    const bounds = new THREE.Box3();
-    model.traverse(object => {
-      if (!object.isSkinnedMesh || !/^Rogue_/.test(object.name)) return;
-      object.skeleton.update();object.computeBoundingBox();bounds.union(object.boundingBox.clone().applyMatrix4(object.matrixWorld));
-    });
-    const height = bounds.max.y - bounds.min.y;
-    if (!Number.isFinite(height) || height < .1 || !feet.length) throw new Error('Invalid humanoid skin/bounds');
-    model.scale.setScalar(MODEL.height / height);model.rotation.y = Math.PI;
-    visual.remove(fallback.root);visual.add(model);rememberPose();
-    Object.assign(status, { loaded: true, loading: false, fallback: false, bones: bones.size, animations: gltf.animations.map(clip => clip.name), height: MODEL.height, clip: 'Idle' });
+    mixer.setTime(0);
+    if (!Number.isFinite(height) || height < .5) throw new Error('Invalid adult model bounds');
+    model.scale.setScalar(PERSON.height / height);
+    visual.remove(fallback.root);visual.add(model);
+    Object.assign(status, { loaded: true, loading: false, fallback: false, bones: boneCount,
+      animations: gltf.animations.map(clip => clip.name), height: PERSON.height, clip: CLIPS.idle });
     if (lastState) update(0, lastState);
     return status;
   }).catch(error => {
     mixer = null;model = null;visual.clear();visual.add(fallback.root);visual.position.y = 0;
-    Object.assign(status, { loaded: false, loading: false, fallback: true, model: 'Local skinned exploration human', source: 'Original procedural fallback included with this app', author: 'Original project fallback', license: 'Original geometry generated by this project', error: String(error.message ?? error), clip: 'procedural' });
+    Object.assign(status, { loaded: false, loading: false, fallback: true, model: 'Local adult skinned exploration human',
+      author: 'Original project fallback', source: 'Original project geometry', license: 'Original project geometry', error: String(error.message ?? error), clip: 'procedural' });
     return status;
   });
   function setVisible(value) { visibility = !!value;anchor.visible = visibility;shadow.visible = visibility && !!lastState?.grounded; }

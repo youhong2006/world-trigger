@@ -1,10 +1,11 @@
 // Character dimensions and speeds are metres and seconds, independent of FPS.
+import { PERSON } from './building-metrics.js';
 export const CHARACTER = Object.freeze({
   radius: .28,
-  standingHeight: 1.8,
-  crouchingHeight: 1.05,
-  standingEyeHeight: 1.68,
-  crouchingEyeHeight: .95,
+  standingHeight: PERSON.height,
+  crouchingHeight: PERSON.crouchHeight,
+  standingEyeHeight: PERSON.eyeHeight,
+  crouchingEyeHeight: PERSON.crouchEyeHeight,
   walkSpeed: 2.2,
   sprintSpeed: 6.2,
   crouchSpeed: 1.15,
