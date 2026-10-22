@@ -221,8 +221,10 @@ export function createArchitecture(scene) {
       for (const side of [-1, 1]) {
         part(lot, side * w / 2, h + .2, 0, .18, .45, d, color);
         part(lot, 0, h + .2, side * d / 2, w, .45, .18, color);
+        obstacle(lot,side*w/2,0,.18,d,h+.2,.45);obstacle(lot,0,side*d/2,w,.18,h+.2,.45);
       }
       part(lot, -w * .22, h + .22, -d * .18, 1.9, 1.2, 1.1, '#96a5a9');
+      obstacle(lot,-w*.22,-d*.18,1.9,1.1,h+.22,1.2);
     }
     // The entrance is 2.1 m high in world units, independent of building size.
     const bays = Math.max(1, Math.floor(w / 3.8)), bayWidth = w / bays;
@@ -283,8 +285,8 @@ export function createArchitecture(scene) {
     }
     buckets.clear();
   }
-  function update(camera) {
-    for (const item of detailGroups) item.group.visible = Math.hypot(camera.position.x - item.x, camera.position.z - item.z, camera.position.y) < 920;
+  function update(camera, distance = 920) {
+    for (const item of detailGroups) item.group.visible = Math.hypot(camera.position.x - item.x, camera.position.z - item.z, camera.position.y) < distance;
   }
   return { add, finish, update, metrics, obstacles };
 }

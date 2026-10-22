@@ -4,19 +4,20 @@ import { PERSON } from './building-metrics.js';
 const RADIUS = .24;
 const WALL_MARGIN = .035;
 const MIN_DISTANCE = 1.4;
-const MAX_DISTANCE = 7;
+const MAX_DISTANCE = 9;
 
 // Camera collision is independent of the player's capsule: a clear walking
 // position can still put an over-the-shoulder camera on the far side of a wall.
 export function createPlayerCamera({ camera, collision, groundHeight }) {
   let mode = 'first', distance = 4.2, initialized = false;
+  let customFov=null, shoulder=.25, smooth=12, speedFov=false, reducedMotion=false, currentSpeed=0;
   let actualDistance = 0, obstructed = false;
   const lastPivot = new Vector3();
   const pivot = new Vector3(), forward = new Vector3(), right = new Vector3();
   const desired = new Vector3(), resolved = new Vector3(), lookTarget = new Vector3();
 
   function projection() {
-    const fov = mode === 'first' ? 62 : 60;
+    const fov = (customFov ?? (mode === 'first' ? 62 : 60)) + (speedFov && !reducedMotion ? Math.min(7,Math.max(0,currentSpeed-14)*.25) : 0);
     if (camera.fov !== fov || camera.near !== .10) {
       camera.fov = fov;camera.near = .10;camera.updateProjectionMatrix();
     }
@@ -65,7 +66,8 @@ export function createPlayerCamera({ camera, collision, groundHeight }) {
     return mode;
   }
 
-  function update(dt, { position, eyeHeight = PERSON.eyeHeight, yaw = 0, pitch = 0 }) {
+  function update(dt, { position, eyeHeight = PERSON.eyeHeight, yaw = 0, pitch = 0, speed = 0 }) {
+    currentSpeed = speed;
     projection();
     const viewPitch = MathUtils.clamp(pitch, -Math.PI / 2 + .06, Math.PI / 2 - .06);
     camera.rotation.order = 'YXZ';
@@ -81,10 +83,10 @@ export function createPlayerCamera({ camera, collision, groundHeight }) {
     right.set(Math.cos(yaw), 0, -Math.sin(yaw));
     // Keep the actual requested boom length independent of the small shoulder
     // offset, and aim ahead so the avatar sits below the centre of the view.
-    desired.copy(pivot).addScaledVector(forward, -Math.sqrt(distance * distance - .25 * .25)).addScaledVector(right, .25);
+    desired.copy(pivot).addScaledVector(forward, -Math.sqrt(distance * distance - shoulder * shoulder)).addScaledVector(right, shoulder);
     const desiredBlocked = constrain(pivot, desired, resolved);
     if (!initialized || lastPivot.distanceTo(pivot) > 12) camera.position.copy(resolved);
-    else camera.position.lerp(resolved, 1 - Math.exp(-Math.min(Math.max(dt, 0), .25) * 12));
+    else camera.position.lerp(resolved, 1 - Math.exp(-Math.min(Math.max(dt, 0), .25) * smooth));
 
     // Smoothing is also collision checked; shortening only the destination
     // would leave the previous camera position behind a newly encountered wall.
@@ -99,13 +101,21 @@ export function createPlayerCamera({ camera, collision, groundHeight }) {
   }
 
   function diagnostics() {
-    return { mode, desiredDistance: mode === 'third' ? distance : 0, actualDistance, obstructed };
+    return { mode, desiredDistance: mode === 'third' ? distance : 0, actualDistance, obstructed, fov:camera.fov, shoulder };
   }
 
   return {
     get mode() { return mode; },
     toggle() { return setMode(mode === 'first' ? 'third' : 'first'); },
     setMode,
+    configure(settings) {
+      if(Number.isFinite(settings.fov)) customFov=MathUtils.clamp(settings.fov,55,100);
+      if(Number.isFinite(settings.cameraDistance)) distance=MathUtils.clamp(settings.cameraDistance,MIN_DISTANCE,MAX_DISTANCE);
+      if(settings.shoulder) shoulder=settings.shoulder==='left'?-.32:.32;
+      if(Number.isFinite(settings.cameraSmooth)) smooth=MathUtils.clamp(settings.cameraSmooth,5,25);
+      speedFov=!!settings.speedFov;reducedMotion=!!settings.reducedMotion;
+      projection();
+    },
     zoom(delta) {
       if (mode === 'third' && Number.isFinite(delta)) distance = MathUtils.clamp(distance * Math.exp(MathUtils.clamp(delta, -2000, 2000) * .001), MIN_DISTANCE, MAX_DISTANCE);
       return distance;

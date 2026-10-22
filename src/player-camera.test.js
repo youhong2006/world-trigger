@@ -71,10 +71,10 @@ test('zoom is bounded and respawn resets chase interpolation without changing th
   view.zoom(-1000);view.setMode('third');view.update(1 / 60, state());
   near(view.diagnostics.desiredDistance, 4.2, 1e-8);
   view.zoom(-1e9);view.update(1 / 60, state());near(view.diagnostics.desiredDistance, 1.4);
-  view.zoom(1e9);view.zoom(1e9);view.update(1 / 60, state());near(view.diagnostics.desiredDistance, 7);
+  view.zoom(1e9);view.zoom(1e9);view.update(1 / 60, state());near(view.diagnostics.desiredDistance, 9);
   view.reset();view.update(1 / 60, state({ position: { x: 2500, y: 4, z: -1200 } }));
-  assert.equal(view.mode, 'third');near(view.diagnostics.actualDistance, 7);
-  assert.ok(camera.position.distanceTo(new Vector3(2500, 4 + 1.68 * .9, -1200)) < 7.001);
+  assert.equal(view.mode, 'third');near(view.diagnostics.actualDistance, 9);
+  assert.ok(camera.position.distanceTo(new Vector3(2500, 4 + 1.68 * .9, -1200)) < 9.001);
 });
 
 test('chase smoothing has the same response at 60Hz and 120Hz', () => {
@@ -85,4 +85,10 @@ test('chase smoothing has the same response at 60Hz and 120Hz', () => {
     return camera.position;
   }
   assert.ok(result(60).distanceTo(result(120)) < 1e-7);
+});
+
+test('camera settings affect FOV, shoulder, distance and optional speed feedback without moving the player',()=>{
+  const {camera,view}=setup();view.setMode('third');view.configure({fov:80,cameraDistance:6,shoulder:'left',cameraSmooth:20,speedFov:true,reducedMotion:false});
+  const player=state({speed:42});view.update(1/60,player);assert.equal(camera.fov,87);assert.equal(view.diagnostics.shoulder,-.32);near(view.diagnostics.desiredDistance,6);
+  view.configure({fov:80,shoulder:'right',speedFov:true,reducedMotion:true});view.update(1/60,player);assert.equal(camera.fov,80);assert.equal(view.diagnostics.shoulder,.32);assert.deepEqual(player.position,{x:0,y:0,z:0});
 });

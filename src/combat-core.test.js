@@ -1,0 +1,52 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createCombatCore } from './combat-core.js';
+test('preparing can be cancelled for free, valid casts consume once and future weapons stay unavailable', () => {
+  const core = createCombatCore();
+  assert.equal(core.begin('viper'), false);
+  assert.equal(core.begin('grasshopper'), true);
+  assert.equal(core.begin('grasshopper'), false);
+  core.cancel();
+  assert.equal(core.snapshot.remaining, 100);
+  assert.equal(core.consume('grasshopper'), true);
+  assert.equal(core.snapshot.remaining, 96);
+});
+test('recovery waits after spending and pauses resource, recovery and preparation', () => {
+  const core = createCombatCore();
+  core.consume('grasshopper');
+  core.update(1);
+  assert.equal(core.snapshot.remaining, 96);
+  core.pause(true);
+  core.update(30);
+  assert.equal(core.snapshot.remaining, 96);
+  assert.equal(core.begin('grasshopper'), false);
+  core.pause(false);
+  core.update(0.9);
+  assert.ok(core.snapshot.remaining > 96);
+  core.update(100);
+  assert.equal(core.snapshot.remaining, 100);
+});
+test('overdraw is rejected, exhaustion emits once, and resetting clears damage and leakage', () => {
+  const core = createCombatCore({ maximum: 8 });
+  let exhausted = 0;
+  core.subscribe((e) => {
+    if (e.type === 'exhausted') exhausted++;
+  });
+  core.consume('grasshopper');
+  core.consume('grasshopper');
+  assert.equal(core.snapshot.remaining, 0);
+  assert.equal(core.consume('grasshopper'), false);
+  core.update(100);
+  assert.equal(exhausted, 1);
+  core.pause(true);
+  core.pause(false);
+  assert.equal(core.snapshot.state, 'exhausted');
+  core.reset();
+  core.setLeakage(2);
+  core.damage(1);
+  core.update(0.5);
+  assert.equal(core.snapshot.remaining, 6);
+  core.reset();
+  assert.equal(core.snapshot.leakage, 0);
+  assert.equal(core.snapshot.remaining, 8);
+});

@@ -75,3 +75,20 @@ test('a walking character can enter all three bridges in either direction withou
     assert.ok(Math.abs(motor.position.y - (offset ? .79 : .65)) < .001);
   }
 });
+
+test('airborne characters can cross a river while low walking positions remain blocked',()=>{
+  const index=createCollisionIndex(),rz=riverZ(200);assert.equal(index.canOccupy(200,rz,10,1.75),true);assert.equal(index.canOccupy(200,rz,1,1.75),false);
+});
+test('pitched roof support follows the roof surface rather than a floating flat box',()=>{
+  const index=createCollisionIndex();index.add({x,z,w:20,d:16,y:0,h:12,roof:{kind:'gable',bottom:8,height:4,w:20,d:16,rotation:0}});
+  assert.ok(Math.abs(index.surfaceHeightAt(x,z,20)-12)<1e-8);const edge=index.surfaceHeightAt(x+8,z,20);assert.ok(edge>8.7&&edge<9.1);assert.equal(index.canOccupy(x+8,z,edge,1.75),true);assert.equal(index.canOccupy(x+8,z,edge-.2,1.75),false);
+});
+
+test('camera sweeps follow pitched roof planes without phantom walls above the eaves',()=>{
+  for(const kind of ['gable','hip']) {
+    const index=createCollisionIndex();index.add({x,z,w:20,d:16,y:0,h:12,roof:{kind,bottom:8,height:4,w:20,d:16,rotation:0}});
+    const from={x:x+8,y:10.4,z},away={x:x+14,y:10.4,z},toward={x,y:10.4,z};
+    assert.equal(index.segmentFraction(from,away,.24),1,kind+' camera can look away above the sloped surface');
+    const hit=index.segmentFraction(from,toward,.24);assert.ok(hit>0&&hit<1,kind+' roof ridge still blocks the camera');
+  }
+});

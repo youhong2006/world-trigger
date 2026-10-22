@@ -179,3 +179,16 @@ test('the real spatial collision index supports curbs and height-dependent crouc
   motor.update(1 / 60, {}, 0);
   assert.equal(motor.crouched, true, 'actual city collision prevents standing into a ceiling');
 });
+
+test('maximum configured boost cannot tunnel through thin walls or ceilings',()=>{
+  const wall={minX:0,maxX:.04,minZ:-100,maxZ:100,bottom:0,top:20};const motor=world([wall]);motor.teleport({x:-.7,y:2,z:0});motor.launch({x:65,y:1,z:0});motor.update(.25,{});assert.ok(motor.position.x<=-.28+1e-5);
+  const ceiling={minX:-10,maxX:10,minZ:-10,maxZ:10,bottom:3,top:3.04};const up=world([ceiling]);up.launch({x:0,y:65,z:0});up.update(.25,{});assert.ok(up.position.y<=3-1.75+.001);assert.ok(up.velocity.y<=0);
+});
+test('fast descents land on roofs and leaving the roof transitions to falling',()=>{
+  const roof={minX:-2,maxX:2,minZ:-2,maxZ:2,bottom:0,top:8};const motor=world([roof]);motor.teleport({x:0,y:15,z:0});motor.velocity.y=-60;motor.update(.25,{});assert.equal(motor.grounded,true);assert.equal(motor.position.y,8);
+  motor.configure({walkSpeed:8,sprintSpeed:20,jumpSpeed:12});simulate(motor,1,{strafe:1});assert.ok(motor.position.x>2.3);assert.equal(motor.grounded,false);assert.ok(motor.position.y<8);
+});
+
+test('boosting while crouched cannot force the standing body into a low ceiling',()=>{
+  const motor=world([{minX:-2,maxX:2,minZ:-2,maxZ:2,bottom:1.12,top:1.5}]);motor.update(1/60,{crouch:true});motor.launch({x:0,y:28,z:0});assert.equal(motor.crouched,true);motor.update(1/60,{});assert.equal(motor.crouched,true);assert.ok(motor.position.y<.071);
+});

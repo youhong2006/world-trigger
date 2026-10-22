@@ -26,7 +26,19 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
   const position = { x: 0, y: groundHeight(0, 0), z: 0 };
   const velocity = { x: 0, y: 0, z: 0 };
   let grounded = true, crouched = false, heading = 0, viewYaw = 0;
-  let animation = 'idle', lastLandingSpeed = 0;
+  let animation = 'idle', lastLandingSpeed = 0, boostTime = 0;
+  const tuning = { walkSpeed:CHARACTER.walkSpeed, sprintSpeed:CHARACTER.sprintSpeed, jumpSpeed:CHARACTER.jumpSpeed };
+  function configure(values = {}) {
+    for (const key of Object.keys(tuning)) if (Number.isFinite(values[key])) tuning[key] = clamp(values[key], 1, key === 'sprintSpeed' ? 30 : 20);
+    tuning.sprintSpeed = Math.max(tuning.walkSpeed,tuning.sprintSpeed);
+  }
+  function launch(value) {
+    if (![value.x,value.y,value.z].every(Number.isFinite)) return false;
+    velocity.x=clamp(value.x,-80,80);velocity.y=clamp(value.y,0,65);velocity.z=clamp(value.z,-80,80);
+    grounded=false;if(canOccupy(position.x,position.z,position.y,CHARACTER.standingHeight))crouched=false;coyote=jumpBuffer=landing=0;boostTime=1.4;animation='jump';
+    if(Math.hypot(value.x,value.z)>.1) heading=Math.atan2(-value.x,-value.z);
+    return true;
+  }
   let coyote = CHARACTER.coyoteTime, jumpBuffer = 0, jumpHeld = false, landing = 0;
 
   const height = () => crouched ? CHARACTER.crouchingHeight : CHARACTER.standingHeight;
@@ -49,11 +61,11 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
     heading = viewYaw = facing;crouched = false;
     grounded = Math.abs(position.y - supportAt(position.x, position.z)) < .04;
     coyote = grounded ? CHARACTER.coyoteTime : 0;
-    jumpBuffer = landing = lastLandingSpeed = 0;jumpHeld = false;
+    jumpBuffer = landing = lastLandingSpeed = boostTime = 0;jumpHeld = false;
     animation = grounded ? 'idle' : 'fall';
   }
 
-  function moveAxis(axis, distance) {
+  function moveAxisPart(axis, distance) {
     if (Math.abs(distance) < EPSILON) return;
     const nextX = position.x + (axis === 'x' ? distance : 0);
     const nextZ = position.z + (axis === 'z' ? distance : 0);
@@ -83,8 +95,16 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
     }
   }
 
+  function moveAxis(axis, distance) {
+    const count=Math.max(1,Math.ceil(Math.abs(distance)/.12));
+    for(let i=0;i<count;i++) {
+      const before=position[axis];moveAxisPart(axis,distance/count);
+      if(Math.abs(position[axis]-before)<EPSILON) break;
+    }
+  }
+
   function step(dt, input, yaw) {
-    landing = Math.max(0, landing - dt);
+    landing = Math.max(0, landing - dt);boostTime = Math.max(0,boostTime-dt);
     jumpBuffer = Math.max(0, jumpBuffer - dt);
     if (input.crouch) crouched = true;
     else if (!crouched || canOccupy(position.x, position.z, position.y, CHARACTER.standingHeight)) crouched = false;
@@ -94,7 +114,7 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
     if (grounded) coyote = CHARACTER.coyoteTime;
     else coyote = Math.max(0, coyote - dt);
     if (jumpBuffer > 0 && coyote > 0) {
-      velocity.y = CHARACTER.jumpSpeed;
+      velocity.y = tuning.jumpSpeed;
       grounded = false;coyote = jumpBuffer = landing = 0;
     }
 
@@ -102,10 +122,10 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
     let strafe = clamp(Number(input.strafe) || 0, -1, 1);
     const magnitude = Math.hypot(forward, strafe);
     if (magnitude > 1) { forward /= magnitude;strafe /= magnitude; }
-    const desiredSpeed = crouched ? CHARACTER.crouchSpeed : input.sprint && forward > 0 ? CHARACTER.sprintSpeed : CHARACTER.walkSpeed;
+    const desiredSpeed = crouched ? CHARACTER.crouchSpeed : input.sprint && forward > 0 ? tuning.sprintSpeed : tuning.walkSpeed;
     const targetX = (-Math.sin(yaw) * forward + Math.cos(yaw) * strafe) * desiredSpeed;
     const targetZ = (-Math.cos(yaw) * forward - Math.sin(yaw) * strafe) * desiredSpeed;
-    const response = grounded ? (magnitude > 0 ? 16 : 20) : magnitude > 0 ? 3.4 : .25;
+    const response = grounded ? (magnitude > 0 ? 16 : 20) : boostTime > 0 ? (magnitude > 0 ? .65 : .03) : magnitude > 0 ? 3.4 : .25;
     const alpha = 1 - Math.exp(-response * dt);
     velocity.x += (targetX - velocity.x) * alpha;
     velocity.z += (targetZ - velocity.z) * alpha;
@@ -114,26 +134,23 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
     moveAxis('z', velocity.z * dt);
 
     if (!grounded) {
-      const previousY = position.y;
-      let nextY = previousY + velocity.y * dt - CHARACTER.gravity * dt * dt / 2;
+      let travel = velocity.y * dt - CHARACTER.gravity * dt * dt / 2;
       velocity.y -= CHARACTER.gravity * dt;
-      const support = supportAt(position.x, position.z, previousY);
-      if (velocity.y <= 0 && previousY >= support - .04 && nextY <= support) {
-        lastLandingSpeed = Math.max(0, -velocity.y);
-        position.y = support;velocity.y = 0;grounded = true;
-        coyote = CHARACTER.coyoteTime;
-        if (lastLandingSpeed > 1) landing = .12;
-      } else {
-        if (nextY > previousY && !canOccupy(position.x, position.z, nextY)) {
-          // Stop at the underside of a ceiling instead of entering its mesh.
-          let low = previousY, high = nextY;
-          for (let i = 0; i < 8; i++) {
-            const middle = (low + high) / 2;
-            if (canOccupy(position.x, position.z, middle)) low = middle;else high = middle;
-          }
-          nextY = low;velocity.y = 0;
+      const count=Math.max(1,Math.ceil(Math.abs(travel)/.12));
+      for(let part=0;part<count;part++) {
+        const previousY=position.y;
+        let nextY=previousY+travel/count;
+        const support=supportAt(position.x,position.z,previousY);
+        if(velocity.y<=0 && previousY>=support-.04 && nextY<=support) {
+          lastLandingSpeed=Math.max(0,-velocity.y);position.y=support;velocity.y=0;grounded=true;boostTime=0;
+          coyote=CHARACTER.coyoteTime;if(lastLandingSpeed>1) landing=.12;break;
         }
-        position.y = nextY;
+        if(nextY>previousY && !canOccupy(position.x,position.z,nextY)) {
+          let low=previousY,high=nextY;
+          for(let i=0;i<8;i++) {const middle=(low+high)/2;if(canOccupy(position.x,position.z,middle)) low=middle;else high=middle;}
+          position.y=low;velocity.y=0;break;
+        }
+        position.y=nextY;
       }
     } else velocity.y = 0;
 
@@ -143,7 +160,7 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
     else if (landing > 0) animation = 'land';
     else if (crouched) animation = horizontalSpeed > .12 ? 'crouch-walk' : 'crouch';
     else if (horizontalSpeed < .12) animation = 'idle';
-    else animation = horizontalSpeed > CHARACTER.walkSpeed + .5 ? 'run' : 'walk';
+    else animation = horizontalSpeed > tuning.walkSpeed + .5 ? 'run' : 'walk';
   }
 
   function update(elapsed, input = {}, yaw = viewYaw) {
@@ -159,7 +176,7 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
   }
 
   return {
-    position, velocity, teleport, update,
+    position, velocity, teleport, update, configure, launch,
     get grounded() { return grounded; },
     get crouched() { return crouched; },
     get height() { return height(); },
@@ -168,6 +185,6 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
     get animation() { return animation; },
     get speed() { return speed(); },
     get lastLandingSpeed() { return lastLandingSpeed; },
-    get state() { return { position: { ...position }, velocity: { ...velocity }, grounded, crouched, height: height(), eyeHeight: eyeHeight(), heading, animation, speed: speed(), lastLandingSpeed }; },
+    get state() { return { position: { ...position }, velocity: { ...velocity }, grounded, crouched, height: height(), eyeHeight: eyeHeight(), heading, animation, speed: speed(), lastLandingSpeed, boosted:boostTime>0, boostTime, tuning:{...tuning} }; },
   };
 }

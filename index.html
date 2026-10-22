@@ -1,10 +1,135 @@
-<!doctype html><html lang="zh-Hant"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><meta name="theme-color" content="#16382f"/><title>三門市 Mikado City — 邊境漫遊</title></head><body><div id="scene"></div><div class="vignette"></div><header><a class="brand" href="./" aria-label="三門市首頁"><span class="brand-icon">◈</span><span>MIKADO<span class="brand-small">CITY EXPLORER</span></span></a><nav><span class="live-dot"></span> 自由探索模式 <i></i><button id="help">操作指南 <span>↗</span></button></nav></header><main><section class="intro"><div class="eyebrow"><span>WORLD TRIGGER</span><b>世界探索計畫 / 01</b></div><h1>三門市<span>境界的日常。</span></h1><p>以 BORDER 為中心，沿河岸走入三門市。<br>住宅街、綠地與群山，連成一座城市。</p><button class="primary" id="enter">開始漫遊 <span>↗</span></button><div class="intro-note"><span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span><small>移動 · 滑鼠環顧四周</small></div></section><div class="world-label"><span class="live-dot"></span> MIKADO CITY <span>城市配置 / 參考圖重建</span></div><section class="places"><div class="section-label">探索地點 <span>SELECT A DESTINATION</span><span class="place-count">01 — 04</span></div><div class="place-grid"><button class="place active" data-place="0"><span class="place-number">01</span><span class="place-symbol">⌂</span><strong>住宅街</strong><small>日常開始的地方</small><span class="place-arrow">↗</span></button><button class="place" data-place="1"><span class="place-number">02</span><span class="place-symbol">◫</span><strong>BORDER 本部</strong><small>守護世界的邊界</small><span class="place-arrow">↗</span></button><button class="place" data-place="2"><span class="place-number">03</span><span class="place-symbol">≈</span><strong>河川敷</strong><small>橫向河道與三座橋梁</small><span class="place-arrow">↗</span></button><button class="place" data-place="3"><span class="place-number">04</span><span class="place-symbol">⛩</span><strong>山丘公園</strong><small>西側綠丘上的眺望點</small><span class="place-arrow">↗</span></button></div></section></main><aside class="map"><div class="map-heading"><span>區域導覽</span><span>↗ N</span></div><canvas id="minimap" width="360" height="260"></canvas><div class="map-footer"><span class="live-dot"></span><span id="location">住宅街</span><span id="coordinates">X 0 / Z 0</span></div></aside><div class="scene-tools"><button id="overview" title="城市總覽">◉ <span>城市總覽</span></button><button id="day" title="切換日夜">☀ <span>日間</span></button><button id="sound" title="環境音效">♫ <span>音效關閉</span></button><button id="reset" title="回到起點">↺</button></div><div id="walking" hidden>
-  <span class="walk-dot" aria-hidden="true">+</span>
-  <div class="walk-hint"><span>WASD 移動</span><span>Shift 跑步</span><span>Space 跳躍</span><span>滑鼠環顧 · Esc 離開</span></div>
-  <div class="player-controls" role="group" aria-label="角色與視角控制">
-    <span id="movement-state" class="movement-state" role="status" aria-live="polite" aria-atomic="true">站立</span>
-    <button id="camera-view" type="button" aria-label="切換第一與第三人稱視角（V）" aria-pressed="false" title="V：切換第一／第三人稱">V · 第一人稱</button>
-    <button id="crouch-toggle" type="button" aria-label="切換蹲下與站立（C）" aria-pressed="false" title="C：蹲下／站立">C · 蹲下</button>
-    <button id="player-reset" type="button" title="R：返回本次漫遊起點">R · 返回起點</button>
-  </div>
-</div><div id="toast" role="status"></div><footer><span>三門市探索計畫 <b>非官方同人場景</b></span><span class="footer-right">慢一點，也沒關係。 <span>✳</span></span></footer><dialog id="guide"><button id="close-guide" aria-label="關閉">×</button><div class="eyebrow">EXPLORER'S GUIDE</div><h2>歡迎來到三門市</h2><p>點擊「開始漫遊」進入街道，可隨時切換第一／第三人稱。角色操作以鍵盤與滑鼠為主。</p><dl><dt>WASD / 方向鍵</dt><dd>前後、左右移動；斜向速度保持一致</dd><dt>滑鼠</dt><dd>環顧四周，未鎖定游標時可按住拖曳</dd><dt>Shift</dt><dd>按住跑步</dd><dt>Space</dt><dd>跳躍，空中仍可微調方向</dd><dt>C</dt><dd>切換蹲下／站立，蹲下時慢行</dd><dt>V</dt><dd>一鍵切換第一／第三人稱</dd><dt>滾輪</dt><dd>第三人稱調整鏡頭距離；城市總覽縮放</dd><dt>R</dt><dd>返回本次漫遊起點</dd><dt>Tab</dt><dd>釋放游標操作介面；點擊場景繼續環顧</dd><dt>Esc</dt><dd>離開漫遊，回到探索介面</dd><dt>城市總覽</dt><dd>拖曳旋轉鳥瞰視角</dd><dt>探索地點</dt><dd>選擇四個城市地標，再開始漫遊</dd></dl><p class="guide-note">角色可沿緩坡移動、踏上低路緣；第三人稱鏡頭靠近牆面時會縮短距離。遇到卡點可按 R 返回起點。</p><p class="guide-credits"><a href="./models/avatar/ATTRIBUTION.md" target="_blank" rel="noopener">免費角色模型來源與授權 ↗</a></p><p class="guide-note">以《境界觸發者》為靈感的原創場景，非官方精確復刻。</p></dialog><script type="module" src="/src/main.js"></script></body></html>
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <meta name="theme-color" content="#091d2b" />
+    <meta
+      name="description"
+      content="三門市第三人稱機動演習。使用亮青色蚱蜢觸發器，在街道與屋頂之間高速移動。"
+    />
+    <title>三門市 MIKADO — 機動演習</title>
+  </head>
+  <body>
+    <div id="scene" aria-label="三門市三維場景"></div>
+    <div class="vignette" aria-hidden="true"></div>
+    <header>
+      <a class="brand" href="./" aria-label="三門市首頁"
+        ><span class="brand-icon">◈</span><span>MIKADO<small>BORDER FIELD SYSTEM</small></span></a
+      >
+      <nav aria-label="主要選單">
+        <span class="mode-indicator"><i class="live-dot"></i>單人機動演習</span
+        ><button id="help" title="操作指南">操作指南</button
+        ><button id="settings-open" title="設定（F2）">⚙ <span>設定</span></button
+        ><button id="menu-open" title="選單（Esc）">☰ <span>選單</span></button>
+      </nav>
+    </header>
+    <main id="exploration-home">
+      <section class="intro">
+        <div class="eyebrow"><span>FIELD EXERCISE / 01</span><b>機動訓練開放</b></div>
+        <h1>三門市<span>跨越街道，躍上天際。</span></h1>
+        <p>以蚱蜢穿梭街道與屋頂。<br />掌握方向、速度，以及下一次彈射。</p>
+        <button class="primary" id="enter">開始演習 <span>↗</span></button>
+        <div class="intro-note"><kbd>Q</kbd><small>按住準備 · 放開釋放蚱蜢</small></div>
+        <p class="build-note">目前開放機動訓練；AI 與武器戰鬥將於後續加入。</p>
+      </section>
+      <div class="world-label"><i class="live-dot"></i> MIKADO CITY <span>城市全域 · 自由選擇起點</span></div>
+      <section class="places" aria-label="選擇演習起點">
+        <div class="section-label">選擇起點 <span>DEPLOYMENT POINT</span><span>01 — 04</span></div>
+        <div class="place-grid">
+          <button class="place active" data-place="0">
+            <span class="place-number">01</span><span class="place-symbol">⌂</span><strong>住宅街</strong
+            ><small>街道與屋頂機動</small><span class="place-arrow">↗</span>
+          </button>
+          <button class="place" data-place="1">
+            <span class="place-number">02</span><span class="place-symbol">◫</span><strong>BORDER 本部</strong
+            ><small>巨型基地外圍</small><span class="place-arrow">↗</span>
+          </button>
+          <button class="place" data-place="2">
+            <span class="place-number">03</span><span class="place-symbol">≈</span><strong>河川敷</strong
+            ><small>開闊地帶練習</small><span class="place-arrow">↗</span>
+          </button>
+          <button class="place" data-place="3">
+            <span class="place-number">04</span><span class="place-symbol">△</span><strong>山丘公園</strong
+            ><small>高低差與視野</small><span class="place-arrow">↗</span>
+          </button>
+        </div>
+      </section>
+    </main>
+    <aside class="map">
+      <div class="map-heading"><span>區域雷達</span><span>↑ −Z</span></div>
+      <canvas id="minimap" width="360" height="260" aria-label="目前位置與城市地圖"></canvas>
+      <div class="map-footer">
+        <i class="live-dot"></i><span id="location">三門市全域</span><span id="coordinates">約 7 × 6 km</span>
+      </div>
+    </aside>
+    <div class="scene-tools" role="group" aria-label="場景控制">
+      <button id="overview" title="城市總覽">◉ <span>城市總覽</span></button
+      ><button id="day" title="切換日夜">☀ <span>日間</span></button
+      ><button id="sound" title="切換靜音">♫ <span>聲音開啟</span></button
+      ><button id="reset" title="返回起點">↺</button>
+    </div>
+    <div id="walking" hidden>
+      <div class="reticle" aria-hidden="true"><span></span></div>
+      <div class="flight-readout">
+        <span id="movement-state" role="status" aria-live="polite">站立</span><b id="speed-value">0.0</b
+        ><small>m/s</small><span id="height-value">地面</span>
+      </div>
+      <section class="trion-card hud-card" aria-label="三離子狀態">
+        <div class="hud-caption">TRION RESERVE <span id="system-state">系統就緒</span></div>
+        <div class="trion-number">
+          <strong id="trion-value">100</strong><small>/ 100</small><span id="trion-rate">緩慢恢復</span>
+        </div>
+        <progress id="trion-bar" max="100" value="100" aria-label="剩餘三離子"></progress>
+        <div class="hud-foot"><span>戰鬥體 · 機動演習</span><span id="pad-count">跳板 00</span></div>
+      </section>
+      <div class="walk-hint" id="walk-hint"></div>
+      <div class="player-controls" role="group" aria-label="角色與視角控制">
+        <button id="camera-view">V · 第三人稱</button><button id="crouch-toggle">C · 蹲下</button
+        ><button id="player-reset">R · 返回起點</button>
+      </div>
+      <section class="ability-card hud-card">
+        <div class="hud-caption">
+          ACTIVE TRIGGER <button data-console="loadout" title="查看配裝">配裝 ↗</button>
+        </div>
+        <button id="cast-button" aria-label="按住準備蚱蜢，放開釋放">
+          <kbd id="cast-key">Q</kbd
+          ><span><strong>蚱蜢</strong><small id="cast-status">按住準備 · 放開釋放</small></span
+          ><b>◇</b>
+        </button>
+        <div class="hud-foot"><span>GRASSHOPPER</span><span>4 三離子 / 次</span></div>
+      </section>
+      <div id="exhausted-notice" hidden>
+        <strong>三離子耗盡</strong><span>返回起點以重整戰鬥體</span
+        ><button id="recover-player">重整並返回起點</button>
+      </div>
+    </div>
+    <div id="fps-display" hidden>FPS —</div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <footer>
+      <span>MIKADO / FIELD EXERCISE <b>非官方同人作品</b></span
+      ><span>PC · 鍵盤與滑鼠 <span class="footer-mark">✳</span></span>
+    </footer>
+    <dialog id="console" aria-labelledby="console-title">
+      <div class="console-header">
+        <div>
+          <span class="eyebrow">BORDER / PERSONAL TERMINAL</span>
+          <h2 id="console-title">個人終端</h2>
+        </div>
+        <button id="close-console" aria-label="關閉選單">× <kbd>Esc</kbd></button>
+      </div>
+      <div class="console-body">
+        <nav class="console-nav" aria-label="終端頁面">
+          <button data-tab="pause">◈ <span>演習選單</span></button
+          ><button data-tab="settings">⚙ <span>系統設定</span></button
+          ><button data-tab="loadout">◇ <span>觸發器配裝</span></button
+          ><button data-tab="trajectory">⌁ <span>彈道規劃</span></button
+          ><button data-tab="guide">? <span>操作指南</span></button
+          ><small>單人演習<br />選單開啟時暫停</small>
+        </nav>
+        <div class="console-content" id="console-content"></div>
+      </div>
+    </dialog>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

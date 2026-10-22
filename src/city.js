@@ -136,7 +136,7 @@ export function createCity({ scene, box, collision }) {
         const roofHeight = roofKind === 'flat' ? .7 : 2.8 + random() * 1.6;
         const lot = { ...planned, x, z, foundation, color, roofColor, roofKind, roofHeight };
         architecture.add(lot);
-        collision.add({ x, z, w: footprint.w, d: footprint.d, y: foundation, h: h + roofHeight });
+        collision.add({ x, z, w: footprint.w, d: footprint.d, y: foundation, h: h + (roofKind==='flat'?.22:roofHeight), roof:roofKind === 'flat' ? null : { kind:roofKind,bottom:foundation+h,height:roofHeight,w:w+ARCHITECTURE.eaves*2,d:d+ARCHITECTURE.eaves*2,rotation } });
         lots.push(lot);
       }
     }

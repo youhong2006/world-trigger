@@ -203,8 +203,8 @@ export function createCollisionIndex() {
   const bins = new Map();
   const cellSize = 48;
   let count = 0;
-  function add({ x, z, w, d, y = -Infinity, h = Infinity }) {
-    const bounds = { x, z, halfW: w / 2, halfD: d / 2, w: w / 2 + .6, d: d / 2 + .6, bottom: y, top: Number.isFinite(h) ? y + h : Infinity };
+  function add({ x, z, w, d, y = -Infinity, h = Infinity, roof = null }) {
+    const bounds = { x, z, halfW: w / 2, halfD: d / 2, w: w / 2 + .6, d: d / 2 + .6, bottom: y, top: Number.isFinite(h) ? y + h : Infinity, roof };
     for (let gx = Math.floor((x - bounds.w) / cellSize); gx <= Math.floor((x + bounds.w) / cellSize); gx++) {
       for (let gz = Math.floor((z - bounds.d) / cellSize); gz <= Math.floor((z + bounds.d) / cellSize); gz++) {
         const key = `${gx},${gz}`;
@@ -245,10 +245,19 @@ export function createCollisionIndex() {
     }
     return found;
   }
+  function topAt(b,x,z,radius=0) {
+    if(!b.roof) return b.top;
+    const roof=b.roof, cos=Math.cos(roof.rotation), sin=Math.sin(roof.rotation);
+    const lx=Math.max(0,Math.abs((x-b.x)*cos-(z-b.z)*sin)-radius);
+    const lz=Math.max(0,Math.abs((x-b.x)*sin+(z-b.z)*cos)-radius);
+    let ratio=Math.max(0,1-lx/(roof.w/2));
+    if(roof.kind==='hip') ratio=Math.min(ratio,Math.max(0,(roof.d/2-lz)/(roof.d*.28)));
+    return roof.bottom+roof.height*ratio;
+  }
   function blockedAt(x, z, feetY, height, radius = .28) {
-    if (outsideWalkableWorld(x, z)) return true;
+    if (basinRadius(x,z)>CITY.walkRadius || (inRiver(x,z,.7) && !onBridge(x) && feetY<2)) return true;
     for (const b of nearby(x - radius, z - radius, x + radius, z + radius)) {
-      if (feetY < b.top - .015 && feetY + height > b.bottom + .015
+      if (feetY < topAt(b,x,z,radius) - .015 && feetY + height > b.bottom + .015
           && Math.abs(x - b.x) < b.halfW + radius && Math.abs(z - b.z) < b.halfD + radius) return true;
     }
     return false;
@@ -260,8 +269,9 @@ export function createCollisionIndex() {
     let surface = groundHeight(x, z);
     const supportRadius = .28;
     for (const b of nearby(x - supportRadius, z - supportRadius, x + supportRadius, z + supportRadius)) {
-      if (Number.isFinite(b.top) && b.top <= feetY + maxStep + .015 && b.top > surface
-          && Math.abs(x - b.x) <= b.halfW + supportRadius && Math.abs(z - b.z) <= b.halfD + supportRadius) surface = b.top;
+      const top=topAt(b,x,z,supportRadius);
+      if (Number.isFinite(top) && top <= feetY + maxStep + .015 && top > surface
+          && Math.abs(x - b.x) <= b.halfW + supportRadius && Math.abs(z - b.z) <= b.halfD + supportRadius) surface = top;
     }
     return surface;
   }
@@ -288,11 +298,34 @@ export function createCollisionIndex() {
           if (enter > leave) break;
         }
       }
+      // A pitched roof is a convex volume under its actual planes. Clipping
+      // the sweep to these planes avoids a phantom wall above the sloped eaves.
+      if (b.roof && enter <= leave) {
+        const roof=b.roof, cos=Math.cos(roof.rotation), sin=Math.sin(roof.rotation);
+        const lx=(from.x-b.x)*cos-(from.z-b.z)*sin, lz=(from.x-b.x)*sin+(from.z-b.z)*cos;
+        const vx=(to.x-from.x)*cos-(to.z-from.z)*sin, vz=(to.x-from.x)*sin+(to.z-from.z)*cos;
+        const vy=to.y-from.y, sx=roof.height/(roof.w/2);
+        const planes=[[sx,0,roof.bottom+roof.height],[-sx,0,roof.bottom+roof.height]];
+        if(roof.kind==='hip') {
+          const sz=roof.height/(roof.d*.28), ceiling=roof.bottom+roof.height*.5/.28;
+          planes.push([0,sz,ceiling],[0,-sz,ceiling]);
+        }
+        for(const [nx,nz,ceiling] of planes) {
+          const distance=from.y+nx*lx+nz*lz-ceiling-radius*Math.hypot(1,nx,nz);
+          const direction=vy+nx*vx+nz*vz;
+          if(Math.abs(direction)<1e-9) {if(distance>0){enter=2;break;}}
+          else {
+            const t=-distance/direction;
+            if(direction<0) enter=Math.max(enter,t);else leave=Math.min(leave,t);
+            if(enter>leave) break;
+          }
+        }
+      }
       if (enter <= leave && leave >= 0 && enter >= 0) nearest = Math.min(nearest, enter);
     }
     return nearest;
   }
-  return { add, blocked, blockedAt, canOccupy, surfaceHeightAt, segmentFraction, hasObstacle, overlapsBox, get count() { return count; } };
+  return { add, blocked, blockedAt, canOccupy, outsideWorld:(x,z)=>basinRadius(x,z)>CITY.walkRadius, surfaceHeightAt, segmentFraction, hasObstacle, overlapsBox, get count() { return count; } };
 }
 
 export function seededRandom(initial = 20261022) {

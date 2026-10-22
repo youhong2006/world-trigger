@@ -197,8 +197,9 @@ export function createPlayerAvatar(scene) {
   const fallback = createFallback();visual.add(fallback.root);
   const shadow = new THREE.Mesh(new THREE.CircleGeometry(.29, 24), new THREE.MeshBasicMaterial({ color: '#203529', transparent: true, opacity: .19, depthWrite: false }));
   shadow.rotation.x = -Math.PI / 2;shadow.visible = false;scene.add(shadow);
-  let model = null, mixer = null, action = null, active = '', clock = 0, crouch = 0, visibility = false, lastState = null;
-  const feet = [], actions = new Map(), poseBones = [], animatedPose = new Map();
+  let model = null, mixer = null, action = null, active = '', clock = 0, crouch = 0, chargeBlend=0, visibility = false, lastState = null;
+  const feet = [], actions = new Map(), poseBones = [], armBones = [], animatedPose = new Map();
+  let handBone=null;const handPoint=new THREE.Vector3();
   const status = { model: MODEL.name, author: MODEL.author, source: MODEL.source, license: MODEL.license,
     loaded: false, loading: true, fallback: true, skinned: true, bones: fallback.bones.length,
     animations: [], active: 'idle', clip: 'procedural', height: PERSON.height, proportions: 'adult-anime', error: null };
@@ -233,15 +234,19 @@ export function createPlayerAvatar(scene) {
     lastState = state;clock += Math.min(Math.max(dt, 0), .25);
     anchor.position.copy(state.position);anchor.rotation.y = state.heading ?? 0;
     crouch = THREE.MathUtils.damp(crouch, state.crouched ? 1 : 0, 12, dt);
+    chargeBlend=THREE.MathUtils.damp(chargeBlend,state.charging?1:0,16,dt);
     status.active = state.animation ?? 'idle';
     if (mixer) {
-      for (const bone of poseBones) if (animatedPose.has(bone)) bone.quaternion.copy(animatedPose.get(bone));
+      for (const bone of [...poseBones,...armBones]) if (animatedPose.has(bone)) bone.quaternion.copy(animatedPose.get(bone));
       setAction(state);mixer.update(Math.min(Math.max(dt, 0), .25));
-      for (const bone of poseBones) animatedPose.set(bone, bone.quaternion.clone());
+      for (const bone of [...poseBones,...armBones]) animatedPose.set(bone, bone.quaternion.clone());
       // A deeper forward fold fits the imported adult crouch into the same
       // low-clearance body volume, while counter-rotating the head for vision.
       if (poseBones.length === 3) {
         poseBones[0].rotateX(-.33 * crouch);poseBones[1].rotateX(-.22 * crouch);poseBones[2].rotateX(.55 * crouch);
+      }
+      if(chargeBlend>.001 && armBones.length===2) {
+        armBones[0].rotateX(-.65*chargeBlend);armBones[0].rotateZ(-.55*chargeBlend);armBones[1].rotateX(-1.1*chargeBlend);
       }
       alignFeet();
     }
@@ -251,6 +256,9 @@ export function createPlayerAvatar(scene) {
       const min = Math.min(...fallback.bones.filter(b => /^foot/.test(b.name)).map(b => b.getWorldPosition(point).y));
       fallback.root.position.y = anchor.position.y + .06 * PERSON.height / 1.8 - min;
     }
+    const lean=state.boosted?Math.min(.65,(state.speed??0)/60):0;
+    visual.rotation.x=THREE.MathUtils.damp(visual.rotation.x,-lean,12,Math.min(dt,.25));
+    if(state.charging && !model) fallback.bones.find(b=>b.name==='upperarmr').rotation.x=-1.2;
     anchor.visible = visibility;
     shadow.position.set(state.position.x, (state.groundY ?? state.position.y) + .026, state.position.z);
     shadow.visible = visibility && !!state.grounded;
@@ -261,6 +269,8 @@ export function createPlayerAvatar(scene) {
     for (const name of ['spine', 'chest', 'head']) {
       const bone = model.getObjectByName(humanoid[name]);if (bone) poseBones.push(bone);
     }
+    handBone=model.getObjectByName(humanoid.rightHand);
+    for(const name of ['rightUpperArm','rightLowerArm']) {const bone=model.getObjectByName(humanoid[name]);if(bone)armBones.push(bone);}
     model.updateMatrixWorld(true);animeMaterials(model);addUniformCoat(model, humanoid);
     let boneCount = 0;
     model.traverse(object => {
@@ -295,5 +305,11 @@ export function createPlayerAvatar(scene) {
     return status;
   });
   function setVisible(value) { visibility = !!value;anchor.visible = visibility;shadow.visible = visibility && !!lastState?.grounded; }
-  return { ready, update, setVisible, get diagnostics() { return { ...status, visible: visibility, crouchBlend: crouch }; } };
+  return { ready, update, setVisible,
+    handPosition() {
+      anchor.updateMatrixWorld(true);
+      const bone=handBone??fallback.bones.find(b=>b.name==='handr');
+      return bone.getWorldPosition(handPoint);
+    },
+    get diagnostics() { return { ...status, visible: visibility, crouchBlend: crouch }; } };
 }
