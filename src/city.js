@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createLandscape } from './landscape.js';
 import { createArchitecture } from './architecture.js';
-import { ARCHITECTURE, buildingDimensions, facesNearestStreet, orientedFootprint, fitsStreetLot } from './building-metrics.js';
-import { CITY, basinRadius, terrainHeight, settlementDensity, riverZ, ringDistance, inRiver, inCampus, forestAt, seededRandom, streetPosition } from './city-layout.js';
+import { ARCHITECTURE, orientedFootprint } from './building-metrics.js';
+import { planStreetBlock, urbanOccupancy } from './neighborhood.js';
+import { CITY, STREETS, basinRadius, terrainHeight, settlementDensity, riverZ, ringDistance, inRiver, inCampus, forestAt, seededRandom, streetPosition, streetWidth, streetEdgeWidth, streetElevation, streetAllowed, streetClearance } from './city-layout.js';
 
 const greens = ['#2a633f', '#3d7746', '#477f48', '#376e42', '#56884b'];
 
@@ -54,19 +55,25 @@ export function createCity({ scene, box, collision }) {
   const architecture = createArchitecture(scene);
   const unitBox = new THREE.BoxGeometry(1, 1, 1);
   const plaster = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.95 });
-  const roadMaterial = new THREE.MeshStandardMaterial({ color: '#6c7e89', roughness: 1, side: THREE.DoubleSide });
-  const roadMeshes = [], sidewalkMeshes = [];
+  const roadMaterial = new THREE.MeshStandardMaterial({ color: '#626d75', roughness: 1, side: THREE.DoubleSide });
+  const roadMeshes = [], sidewalkMeshes = [], edgeMeshes = [];
   const sidewalkMaterial = new THREE.MeshStandardMaterial({ color: '#bbc2b7', roughness: 1, side: THREE.DoubleSide });
+  const paintMaterial = new THREE.MeshBasicMaterial({ color: '#deded2', side: THREE.DoubleSide });
 
   function nearRing(x, z, padding = 13) { return ringDistance(x, z) < padding; }
-  function streetAllowed(x, z) {
-    return basinRadius(x, z) < 1.04 && terrainHeight(x, z) < 39
-      && !inCampus(x, z, 8) && !inRiver(x, z, 16) && !forestAt(x, z, -40);
-  }
   function addStreet(points, width = 6) {
     if (points.length < 2) return;
-    roadMeshes.push(ribbon(scene, points, width, '#6c7e89', (x, z) => terrainHeight(x, z) + 0.17, roadMaterial));
-    if (width >= 6) sidewalkMeshes.push(ribbon(scene, points, width + 2.6, '#bbc2b7', (x, z) => terrainHeight(x, z) + 0.10, sidewalkMaterial));
+    const height = streetElevation(width);
+    roadMeshes.push(ribbon(scene, points, width, '#626d75', (x, z) => terrainHeight(x, z) + height, roadMaterial));
+    sidewalkMeshes.push(ribbon(scene, points, width + streetEdgeWidth(width) * 2, '#bbc2b7', (x, z) => terrainHeight(x, z) + 0.10, sidewalkMaterial));
+    if (width <= STREETS.localWidth) for (const side of [-1, 1]) {
+      const edge = points.map(([x, z], i) => {
+        const a = points[Math.max(0, i - 1)], b = points[Math.min(points.length - 1, i + 1)];
+        const dx = b[0] - a[0], dz = b[1] - a[1], length = Math.hypot(dx, dz) || 1;
+        return [x - side * dz / length * (width / 2 - .35), z + side * dx / length * (width / 2 - .35)];
+      });
+      edgeMeshes.push(ribbon(scene, edge, .10, '#deded2', (x, z) => terrainHeight(x, z) + height + .012, paintMaterial));
+    }
   }
 
   // Streets follow the same terrain as walking and taper into rural lanes near the foothills.
@@ -74,13 +81,13 @@ export function createCity({ scene, box, collision }) {
     const major = line % 1008 === 0;
     for (const orientation of [0, 1]) {
       let points = [];
-      for (let cross = -3888; cross <= 3888; cross += 24) {
+      for (let cross = -3888; cross <= 3888; cross += 12) {
         const { x, z } = streetPosition(orientation ? cross : line, orientation ? line : cross);
-        if (!streetAllowed(x, z)) { addStreet(points, major ? 18 : 6); points = []; continue; }
+        if (!streetAllowed(x, z)) { addStreet(points, streetWidth(line)); points = []; continue; }
         points.push([x, z]);
-        if (major && cross % 72 === 0) markings.push({ x, z, y: terrainHeight(x, z) + 0.19, w: orientation ? 6 : 0.2, h: 0.015, d: orientation ? 0.2 : 6, color: '#ebe8cd' });
+        if (major && cross % 36 === 0) markings.push({ x, z, y: terrainHeight(x, z) + streetElevation(streetWidth(line)) + .015, w: orientation ? 6 : 0.15, h: 0.015, d: orientation ? 0.15 : 6, color: '#ebe8cd' });
       }
-      addStreet(points, major ? 18 : 6);
+      addStreet(points, streetWidth(line));
     }
   }
 
@@ -98,35 +105,28 @@ export function createCity({ scene, box, collision }) {
   ring.push(ring[0]);
   addStreet(ring, 16);
 
-  // Larger, physically proportioned homes on serviced plots, with access lanes between inner lots.
+  // Continuous frontage rows replace the sparse fixed candidate grid. Each
+  // 144m block has one 5m through lane, with back-to-back homes on each side.
   for (let bx = -3672; bx <= 3672; bx += CITY.blockSize) {
     for (let bz = -3672; bz <= 3672; bz += CITY.blockSize) {
-      if (settlementDensity(bx, bz) > .28) {
-        for (const orientation of [0, 1]) {
-          let lane = [];
-          for (let t = -72; t <= 72; t += 12) {
-            const { x, z } = streetPosition(bx + (orientation ? t : 0), bz + (orientation ? 0 : t));
-            if (!streetAllowed(x, z) || nearRing(x, z, 15)) { addStreet(lane, 3.4);lane = [];continue; }
-            lane.push([x, z]);
-          }
-          addStreet(lane, 3.4);
+      if (settlementDensity(bx, bz) > .12) {
+        let lane = [];
+        for (let t = -72; t <= 72; t += 8) {
+          const { x, z } = streetPosition(bx + t, bz);
+          if (!streetAllowed(x, z) || nearRing(x, z, 15)) { addStreet(lane, STREETS.laneWidth);lane = [];continue; }
+          lane.push([x, z]);
         }
+        addStreet(lane, STREETS.laneWidth);
       }
-      for (const ox of [-46, -15, 15, 46]) for (const oz of [-46, -15, 15, 46]) {
-        const rawX = bx + ox + (random() - .5) * 2, rawZ = bz + oz + (random() - .5) * 2;
+      for (const planned of planStreetBlock(bx, bz, random)) {
+        const { rawX, rawZ, w, d, h, floors, rotation, midrise } = planned;
         const { x, z } = streetPosition(rawX, rawZ);
-        if (random() > settlementDensity(x, z)) continue;
+        if (random() > urbanOccupancy(x, z)) continue;
         const elevation = terrainHeight(x, z);
         if (elevation > 46 || inCampus(x, z, 30) || inRiver(x, z, 48) || forestAt(x, z, 18) || nearRing(x, z, 32)) continue;
-        const midrise = Math.abs(x) < 1200 && z > 620 && !inRiver(x, z, 180) && random() < .27;
-        const previousW = midrise ? 18 + random() * 6 : 11 + random() * 7;
-        const previousD = midrise ? 17 + random() * 6 : 12 + random() * 6;
-        const previousH = midrise ? 16 + random() * 23 : 6 + random() * 5;
-        const dimensions = buildingDimensions(previousW, previousD, previousH, midrise);
-        const { w, d, h, floors } = dimensions;
-        const rotation = facesNearestStreet(rawX - bx, rawZ - bz);
-        const footprint = orientedFootprint(w, d, rotation, ARCHITECTURE.balconyDepth + .1);
-        if (!fitsStreetLot(rawX, rawZ, bx, bz, footprint) || collision.overlapsBox(x, z, footprint.w, footprint.d)) continue;
+        const footprint = orientedFootprint(w, d, rotation, ARCHITECTURE.eaves);
+        const corners = [-1, 1].flatMap(sx => [-1, 1].map(sz => [x + sx * footprint.w / 2, z + sz * footprint.d / 2]));
+        if (corners.some(([cx, cz]) => streetClearance(cx, cz) < .15) || collision.overlapsBox(x, z, footprint.w, footprint.d)) continue;
         const cornerHeights = [-1, 1].flatMap(sx => [-1, 1].map(sz => terrainHeight(x + sx * footprint.w / 2, z + sz * footprint.d / 2)));
         if (Math.max(...cornerHeights) - Math.min(...cornerHeights) > 1.8) continue;
         const foundation = Math.max(elevation, ...cornerHeights);
@@ -134,7 +134,7 @@ export function createCity({ scene, box, collision }) {
         const choice = random();
         const roofKind = midrise || (floors >= 4 && choice < .65) ? 'flat' : choice < .48 ? 'gable' : choice < .86 ? 'hip' : 'flat';
         const roofHeight = roofKind === 'flat' ? .7 : 2.8 + random() * 1.6;
-        const lot = { x, z, w, d, h, foundation, floors, color, roofColor, roofKind, roofHeight, rotation, midrise, previousW, previousD };
+        const lot = { ...planned, x, z, foundation, color, roofColor, roofKind, roofHeight };
         architecture.add(lot);
         collision.add({ x, z, w: footprint.w, d: footprint.d });
         lots.push(lot);
@@ -142,6 +142,7 @@ export function createCity({ scene, box, collision }) {
     }
   }
   architecture.finish();
+  for (const obstacle of architecture.obstacles) collision.add(obstacle);
   instances(scene, unitBox, plaster, markings, false);
   // Merge terrain-following streets so extending the city does not add hundreds of draw calls.
   scene.remove(...roadMeshes);
@@ -152,6 +153,9 @@ export function createCity({ scene, box, collision }) {
   scene.remove(...sidewalkMeshes);
   const sidewalks = new THREE.Mesh(mergeGeometries(sidewalkMeshes.map(mesh => mesh.geometry)), sidewalkMaterial);
   sidewalks.receiveShadow = true;scene.add(sidewalks);
+  scene.remove(...edgeMeshes);
+  const edges = new THREE.Mesh(mergeGeometries(edgeMeshes.map(mesh => mesh.geometry)), paintMaterial);
+  edges.name = 'Residential street edge lines';scene.add(edges);
 
   function addTree(x, z, scale = 1) {
     const y = terrainHeight(x, z), height = (7 + random() * 4) * scale;
@@ -164,8 +168,7 @@ export function createCity({ scene, box, collision }) {
     if (r < 0.3 || r > 1.58 || h > 720 || inCampus(x, z, 12) || inRiver(x, z, 64) || nearRing(x, z, 15)) continue;
     const chance = forestAt(x, z, 10) ? 0.96 : r > 0.75 ? 0.76 : 0.11;
     if (random() > chance || collision.hasObstacle(x, z)) continue;
-    if (Math.abs(x - Math.round(x / CITY.blockSize) * CITY.blockSize) < 12 && h < 39) continue;
-    if (Math.abs(z - Math.round(z / CITY.blockSize) * CITY.blockSize) < 12 && h < 39) continue;
+    if (streetClearance(x, z) < 2 && h < 39) continue;
     addTree(x, z, 0.85 + random() * 0.8);
   }
   // More closely spaced vegetation gives the interior green belts a natural canopy edge.

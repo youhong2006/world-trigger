@@ -34,6 +34,15 @@ export const CITY = {
   ],
 };
 
+export const STREETS = {
+  arterialWidth: 12, localWidth: 6, laneWidth: 5,
+  sidewalk: 1.25, sharedEdge: .45,
+  frontDepth: 3.8, sideGap: 2.4, rearGap: 2.4,
+};
+export const streetWidth = line => Math.abs(line % 1008) < .01 ? STREETS.arterialWidth : STREETS.localWidth;
+export const streetEdgeWidth = width => width >= 10 ? STREETS.sidewalk : STREETS.sharedEdge;
+export const streetElevation = width => width >= 14 ? .23 : width >= 10 ? .21 : width >= 6 ? .19 : .17;
+
 const smooth = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -107,6 +116,33 @@ export function streetPosition(x, z) {
   };
 }
 
+export function unwarpStreet(x, z) {
+  let rawX = x, rawZ = z;
+  for (let i = 0; i < 6; i++) {
+    const warped = streetPosition(rawX, rawZ);
+    rawX += x - warped.x;rawZ += z - warped.z;
+  }
+  return { x: rawX, z: rawZ };
+}
+
+export function streetAllowed(x, z) {
+  return basinRadius(x, z) < 1.04 && terrainHeight(x, z) < 39
+    && !inCampus(x, z, 8) && !inRiver(x, z, 16) && !forestAt(x, z, -40);
+}
+
+export function streetClearance(x, z) {
+  const raw = unwarpStreet(x, z);
+  let clearance = Infinity;
+  for (const value of [raw.x, raw.z]) {
+    const grid = Math.round(value / CITY.blockSize) * CITY.blockSize;
+    const width = streetWidth(grid);
+    clearance = Math.min(clearance, Math.abs(value - grid) - width / 2 - streetEdgeWidth(width));
+  }
+  // One through lane per block: residential rows face it on both sides.
+  const lane = CITY.blockSize / 2 + Math.round((raw.z - CITY.blockSize / 2) / CITY.blockSize) * CITY.blockSize;
+  return Math.min(clearance, Math.abs(raw.z - lane) - STREETS.laneWidth / 2 - STREETS.sharedEdge);
+}
+
 export function lookoutTerrainHeight(x, z) {
   const dx = x - CITY.lookout.x, dz = z - CITY.lookout.z;
   const crest = Math.max(0, 1 - (dx / CITY.lookout.rx) ** 2 - (dz / CITY.lookout.rz) ** 2);
@@ -119,25 +155,23 @@ export function terrainHeight(x, z) {
 }
 
 export function pavedSurfaceOffset(x, z) {
-  if (ringDistance(x, z) < 8) return .17;
-  if (basinRadius(x, z) >= 1.04 || terrainHeight(x, z) >= 39 || inCampus(x, z, 8) || inRiver(x, z, 16) || forestAt(x, z, -40)) return 0;
-  let rawX = x, rawZ = z;
-  for (let i = 0; i < 3; i++) {
-    const warped = streetPosition(rawX, rawZ);
-    rawX += x - warped.x;rawZ += z - warped.z;
-  }
+  if (ringDistance(x, z) < 8) return streetElevation(16);
+  if (!streetAllowed(x, z)) return 0;
+  const { x: rawX, z: rawZ } = unwarpStreet(x, z);
   let offset = 0;
   for (const value of [rawX, rawZ]) {
     const gridLine = Math.round(value / CITY.blockSize) * CITY.blockSize;
-    const halfWidth = Math.abs(gridLine % 1008) < .01 ? 9 : 3;
+    const width = streetWidth(gridLine), halfWidth = width / 2;
     const distance = Math.abs(value - gridLine);
-    if (distance < halfWidth) return .17;
-    if (distance < halfWidth + 1.3) offset = .10;
+    if (distance < halfWidth) offset = Math.max(offset, streetElevation(width));
+    else if (distance < halfWidth + streetEdgeWidth(width)) offset = Math.max(offset, .10);
   }
   const blockX = 72 + Math.round((rawX - 72) / 144) * 144;
   const blockZ = 72 + Math.round((rawZ - 72) / 144) * 144;
-  if (settlementDensity(blockX, blockZ) > .28 && ringDistance(x, z) > 15
-      && (Math.abs(rawX - blockX) < 1.7 || Math.abs(rawZ - blockZ) < 1.7)) return .17;
+  if (settlementDensity(blockX, blockZ) > .12 && ringDistance(x, z) > 15) {
+    if (Math.abs(rawZ - blockZ) < STREETS.laneWidth / 2) return Math.max(offset, streetElevation(STREETS.laneWidth));
+    if (Math.abs(rawZ - blockZ) < STREETS.laneWidth / 2 + STREETS.sharedEdge) offset = Math.max(offset, .10);
+  }
   return offset;
 }
 

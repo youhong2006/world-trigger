@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ARCHITECTURE } from './building-metrics.js';
+import { ARCHITECTURE, orientedFootprint } from './building-metrics.js';
 
 function canvasTexture(paint, size = 512) {
   const canvas = document.createElement('canvas');
@@ -101,9 +101,9 @@ export function createArchitecture(scene) {
   const roofMaterial = new THREE.MeshToonMaterial({ color: '#ffffff', map: roofTexture(), gradientMap: tones });
   const outlineMaterial = new THREE.MeshBasicMaterial({ color: '#243c51', side: THREE.BackSide });
   const box = new THREE.BoxGeometry(1, 1, 1);
-  const geometry = { body: box, trim: box, gable: roofGeometry(), hip: roofGeometry(true), gableEnd: roofGeometry(false, true), attic: box, outline: box };
-  const material = { body: [facade, facade, plain, plain, facade, facade], trim: plain, gable: roofMaterial, hip: roofMaterial, gableEnd: plain, attic: plain, outline: outlineMaterial };
-  const buckets = new Map(), detailGroups = [], metrics = { houses: 0, apartments: 0, balconies: 0, doors: 0 };
+  const geometry = { body: box, trim: box, paving: box, gable: roofGeometry(), hip: roofGeometry(true), gableEnd: roofGeometry(false, true), attic: box, outline: box };
+  const material = { body: [facade, facade, plain, plain, facade, facade], trim: plain, paving: plain, gable: roofMaterial, hip: roofMaterial, gableEnd: plain, attic: plain, outline: outlineMaterial };
+  const buckets = new Map(), detailGroups = [], obstacles = [], metrics = { houses: 0, apartments: 0, balconies: 0, doors: 0, parkingSpaces: 0, parkedCars: 0 };
   const detailCellSize = 512;
   function entry(type, item, detail = false) {
     const cellSize = detail ? detailCellSize : 1536;
@@ -117,6 +117,83 @@ export function createArchitecture(scene) {
   function part(lot, x, y, z, w, h, d, color, roll = 0) {
     const cos = Math.cos(lot.rotation), sin = Math.sin(lot.rotation);
     entry('trim', { x: lot.x + x * cos + z * sin, y: lot.foundation + y + h / 2, z: lot.z - x * sin + z * cos, w, h, d, rotation: lot.rotation, roll, color }, true);
+  }
+  function obstacle(lot, x, z, w, d) {
+    const cos = Math.cos(lot.rotation), sin = Math.sin(lot.rotation);
+    obstacles.push({
+      x: lot.x + x * cos + z * sin,
+      z: lot.z - x * sin + z * cos,
+      ...orientedFootprint(w, d, lot.rotation),
+    });
+  }
+  function frontage(lot, doorX) {
+    const { x, z, w, d, rotation, foundation } = lot;
+    const depth = Math.min(lot.parcel?.frontDepth ?? 3.8, 3.8);
+    const cos = Math.cos(rotation), sin = Math.sin(rotation);
+    // Compact paved thresholds stay visible from above, instead of isolated grass lawns.
+    entry('paving', {
+      x: x + (d / 2 + depth / 2) * sin,
+      z: z + (d / 2 + depth / 2) * cos,
+      y: foundation + .035, w: w + .24, h: .05, d: depth,
+      rotation, color: '#b7bdb2',
+    });
+    part(lot, doorX, .065, d / 2 + depth / 2, 1.65, .025, depth, '#cbd0c4');
+    const parkingX = w / 2 - 1.7;
+    const parkingDepth = Math.min(3.6, depth - .2);
+    const parkingZ = d / 2 + depth / 2;
+    for (const side of [-1, 1]) part(lot, parkingX + side * 1.25, .063, parkingZ, .065, .012, parkingDepth, '#e5e6db');
+    part(lot, parkingX, .063, d / 2 + depth - .18, 2.5, .012, .065, '#e5e6db');
+    metrics.parkingSpaces++;
+
+    // Low Japanese boundary walls leave a pedestrian gate and an open parking entrance.
+    const openings = [[doorX - 1.15, doorX + 1.15], [parkingX - 1.4, parkingX + 1.4]].sort((a, b) => a[0] - b[0]);
+    let edge = -w / 2;
+    const segments = [];
+    for (const [start, end] of openings) {
+      if (start > edge) segments.push([edge, start]);
+      edge = Math.max(edge, end);
+    }
+    if (edge < w / 2) segments.push([edge, w / 2]);
+    const wallZ = d / 2 + depth - .1;
+    for (const [start, end] of segments) {
+      const length = end - start;
+      if (length < .2) continue;
+      part(lot, (start + end) / 2, .07, wallZ, length, .52, .16, '#969e98');
+      part(lot, (start + end) / 2, .59, wallZ, length + .04, .045, .21, '#c5cac0');
+      obstacle(lot, (start + end) / 2, wallZ, length + .04, .21);
+    }
+    for (const side of [-1, 1]) {
+      part(lot, side * (w / 2 + .02), .07, parkingZ, .14, .52, depth, '#a1a9a0');
+      obstacle(lot, side * (w / 2 + .02), parkingZ, .14, depth);
+    }
+    const plant = segments.find(([start, end]) => end - start > 2);
+    if (plant) {
+      const length = Math.min(3.2, plant[1] - plant[0] - .2);
+      part(lot, plant[0] + .1 + length / 2, .07, wallZ - .36, length, .16, .48, '#788573');
+      part(lot, plant[0] + .1 + length / 2, .23, wallZ - .36, length - .08, .42, .4, '#4d7353');
+    }
+    part(lot, doorX + 1.32, .07, wallZ - .17, .09, .9, .09, '#5d6b6d');
+    part(lot, doorX + 1.32, .95, wallZ - .17, .38, .3, .23, '#566971');
+    part(lot, doorX + 1.32, 1.14, wallZ - .04, .26, .025, .015, '#b7c3bd');
+
+    const variation = Math.sin(x * .73 + z * 1.37) * 43758.5453;
+    const chance = variation - Math.floor(variation);
+    if (depth >= 3.6 && chance < .34) {
+      const carColor = ['#d3dedc', '#7b9aab', '#bea6a5', '#bbc3af'][Math.floor(chance / .34 * 4)];
+      // Kei-car dimensions provide a familiar scale cue without occupying the street.
+      part(lot, parkingX, .29, parkingZ, 1.48, .56, 3.4, carColor);
+      part(lot, parkingX, .85, parkingZ - .12, 1.34, .75, 2.14, carColor);
+      for (const side of [-1, 1]) {
+        part(lot, parkingX + side * .674, .99, parkingZ - .12, .018, .44, 1.85, '#354f60');
+        for (const end of [-1, 1]) part(lot, parkingX + side * .71, .12, parkingZ + end * 1.05, .16, .42, .48, '#34454b');
+      }
+      for (const end of [-1, 1]) {
+        part(lot, parkingX, .99, parkingZ - .12 + end * 1.08, 1.12, .44, .018, '#3e5c6e');
+        part(lot, parkingX, .49, parkingZ + end * 1.706, 1.13, .14, .018, end > 0 ? '#bd7c72' : '#dae4d6');
+      }
+      obstacle(lot, parkingX, parkingZ, 1.48, 3.4);
+      metrics.parkedCars++;
+    }
   }
   function add(lot) {
     const { x, z, w, d, h, foundation, rotation, color, roofColor, roofHeight, roofKind, floors, midrise } = lot;
@@ -151,7 +228,7 @@ export function createArchitecture(scene) {
     const doorBay = midrise ? Math.floor(bays / 2) : Math.floor(bays / 4);
     const doorX = (doorBay + .5) * bayWidth - w / 2;
     part(lot, doorX, 0, d / 2 + .04, bayWidth * .86, 2.75, .08, color);
-    part(lot, doorX, .02, d / 2 + 2.6, 1.65, .04, 5.2, '#aab4b0');
+    frontage(lot, doorX);
     part(lot, doorX, .1, d / 2 + .1, 1.14, ARCHITECTURE.doorHeight + .13, .1, '#53626a');
     part(lot, doorX, .13, d / 2 + .17, ARCHITECTURE.doorWidth, ARCHITECTURE.doorHeight, .08, '#58646a');
     part(lot, doorX + .22, .95, d / 2 + .23, .045, .42, .035, '#c8cfc5');
@@ -196,7 +273,7 @@ export function createArchitecture(scene) {
           object.updateMatrix();mesh.setMatrixAt(i, object.matrix);
           if (item.color) mesh.setColorAt(i, new THREE.Color(item.color));
         });
-        mesh.castShadow = type !== 'outline' && !bucket.detail;
+        mesh.castShadow = type !== 'outline' && type !== 'paving' && !bucket.detail;
         mesh.receiveShadow = type !== 'outline';
         mesh.computeBoundingSphere();group.add(mesh);
       }
@@ -208,5 +285,5 @@ export function createArchitecture(scene) {
   function update(camera) {
     for (const item of detailGroups) item.group.visible = Math.hypot(camera.position.x - item.x, camera.position.z - item.z, camera.position.y) < 920;
   }
-  return { add, finish, update, metrics };
+  return { add, finish, update, metrics, obstacles };
 }
