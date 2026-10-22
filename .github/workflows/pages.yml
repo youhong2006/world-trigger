@@ -30,6 +30,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Test movement and city layout
+        run: npm test
       - name: Build
         run: npm run build
       - name: Configure Pages

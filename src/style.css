@@ -18,3 +18,41 @@ body.overview .places{width:57%;}
   body:not(.exploring):not(.overview) .intro p,body:not(.exploring):not(.overview) .intro-note{display:none}
   body:not(.exploring):not(.overview) .intro .primary{margin-top:8px;padding:12px 18px}
 }
+
+/* Character controls remain compact so the street and third-person avatar stay visible. */
+body.exploring footer{display:none}
+body.third-person .walk-dot{display:none}
+.walk-hint{bottom:85px;display:flex;gap:13px;max-width:calc(100vw - 28px);padding:9px 15px;font-size:10px;pointer-events:none}
+.walk-hint span+span::before{content:'·';margin-right:13px;color:#dbe6d1b3}
+.player-controls{position:absolute;left:50%;bottom:24px;width:max-content;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:6px;background:#eaf0dfed;border:1px solid #ffffffa6;border-radius:8px;box-shadow:0 4px 18px #173c3124;backdrop-filter:blur(10px);white-space:nowrap}
+.player-controls button{min-height:38px;border:1px solid #879d8640;border-radius:5px;padding:8px 12px;background:#f8faef;color:#214a38;font-size:11px}
+.player-controls button:hover{background:#dce9d2}
+.player-controls button[aria-pressed=true]{background:#2d5b45;border-color:#2d5b45;color:#f9f9e9}
+.movement-state{min-width:48px;padding:0 7px;text-align:center;font-size:10px;font-weight:600;color:#46634d}
+#guide{max-height:85vh;overflow:auto}
+.guide-credits{margin:12px 0 0;font-size:11px!important}
+.guide-credits a{color:#41674f;text-underline-offset:3px}
+@media(max-width:760px){
+  .player-controls{bottom:14px;max-width:calc(100vw - 24px);gap:4px;padding:5px;flex-wrap:wrap;justify-content:center}
+  .player-controls button{min-height:40px;padding:8px 9px;font-size:10px}
+  .movement-state{min-width:38px;padding:0 4px}
+  .walk-hint{bottom:78px;gap:7px;font-size:9px;flex-wrap:wrap;justify-content:center;line-height:1.6;width:max-content;white-space:normal;text-align:center}
+  .walk-hint span+span::before{margin-right:7px}
+  body.exploring .map{width:132px;right:12px;bottom:132px;padding:9px}
+  body.exploring .map canvas{height:76px;margin-top:5px}
+  body.exploring .map-footer{gap:5px;font-size:8px;padding-top:6px}
+  body.exploring #coordinates{font-size:6px}
+  #guide{padding:30px 24px}
+  #guide dl{grid-template-columns:1fr 1.45fr;gap:10px 7px}
+}
+@media(max-width:380px){
+  .player-controls{width:calc(100vw - 24px)}
+  .movement-state{flex-basis:100%;min-height:16px}
+  .walk-hint{bottom:99px}
+  body.exploring .map{bottom:156px}
+}
+@media(max-height:540px){
+  body.exploring .map{display:none}
+  .player-controls{bottom:10px}
+  .walk-hint{bottom:66px}
+}

@@ -4,7 +4,7 @@ import { createLandscape } from './landscape.js';
 import { createArchitecture } from './architecture.js';
 import { ARCHITECTURE, orientedFootprint } from './building-metrics.js';
 import { planStreetBlock, urbanOccupancy } from './neighborhood.js';
-import { CITY, STREETS, basinRadius, terrainHeight, settlementDensity, riverZ, ringDistance, inRiver, inCampus, forestAt, seededRandom, streetPosition, streetWidth, streetEdgeWidth, streetElevation, streetAllowed, streetClearance } from './city-layout.js';
+import { CITY, STREETS, basinRadius, terrainHeight, settlementDensity, riverZ, ringDistance, inRiver, inCampus, forestAt, seededRandom, streetPosition, streetWidth, streetEdgeWidth, streetElevation, streetAllowed, streetClearance, bridgeSurfaceHeight } from './city-layout.js';
 
 const greens = ['#2a633f', '#3d7746', '#477f48', '#376e42', '#56884b'];
 
@@ -136,7 +136,7 @@ export function createCity({ scene, box, collision }) {
         const roofHeight = roofKind === 'flat' ? .7 : 2.8 + random() * 1.6;
         const lot = { ...planned, x, z, foundation, color, roofColor, roofKind, roofHeight };
         architecture.add(lot);
-        collision.add({ x, z, w: footprint.w, d: footprint.d });
+        collision.add({ x, z, w: footprint.w, d: footprint.d, y: foundation, h: h + roofHeight });
         lots.push(lot);
       }
     }
@@ -194,6 +194,13 @@ export function createCity({ scene, box, collision }) {
   for (const x of CITY.bridges) {
     const z = riverZ(x), length = CITY.bridgeLength;
     box(x, 0.35, z, 20, 0.3, length, '#7c898d');
+    // Match the collision floor: the bridge deck is reached by a gentle ramp,
+    // rather than an abrupt .44m edge that a walking person cannot step over.
+    for (const direction of [-1, 1]) {
+      const points = Array.from({ length: 8 }, (_, i) => [x, z + direction * (length / 2 + i * 2)]);
+      ribbon(scene, points, 20, '#7c898d', (vx, vz) => bridgeSurfaceHeight(vx, vz) ?? .21);
+      for (const side of [-1, 1]) ribbon(scene, points.map(([vx, vz]) => [vx + side * 8, vz]), 2, '#bfc7c6', (vx, vz) => bridgeSurfaceHeight(vx, vz) ?? .21);
+    }
     for (const side of [-1, 1]) {
       box(x + side * 8, 0.65, z, 2, 0.14, length, '#bfc7c6');
       box(x + side * 9.3, 1.65, z, 0.14, 0.16, length, '#738e9b');

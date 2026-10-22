@@ -176,7 +176,8 @@ export function pavedSurfaceOffset(x, z) {
 }
 
 export function groundHeight(x, z) {
-  if (onBridge(x) && Math.abs(z - riverZ(x)) < CITY.bridgeLength / 2) return CITY.bridges.some(b => Math.abs(x - b) > 7 && Math.abs(x - b) < 9) ? .79 : .65;
+  const bridge = bridgeSurfaceHeight(x, z);
+  if (bridge !== null) return bridge;
   if (Math.abs(x - BASE.x) < BASE.width * BASE.scale / 2 + 1.5 * BASE.scale
       && Math.abs(z - BASE.z) < BASE.depth * BASE.scale / 2 + 1.5 * BASE.scale) return BASE.floorHeight * BASE.scale;
   // Count paved surfaces and the lookout platform when setting the person's eye height.
@@ -185,13 +186,25 @@ export function groundHeight(x, z) {
   return terrainHeight(x, z) + pavedSurfaceOffset(x, z);
 }
 
+export function bridgeSurfaceHeight(x, z) {
+  const bridge = CITY.bridges.find(center => Math.abs(x - center) <= 10.05);
+  if (bridge === undefined) return null;
+  const distance = Math.abs(z - riverZ(bridge)), half = CITY.bridgeLength / 2, rampLength = 14;
+  if (distance > half + rampLength) return null;
+  const offset = Math.abs(x - bridge);
+  const deck = offset >= 7 && offset <= 9.05 ? .79 : .65;
+  const t = Math.max(0, Math.min(1, (half + rampLength - distance) / rampLength));
+  const approach = terrainHeight(x, z) + streetElevation(STREETS.arterialWidth);
+  return approach + (deck - approach) * t;
+}
+
 // Spatial bins keep walking checks independent of the total building count.
 export function createCollisionIndex() {
   const bins = new Map();
   const cellSize = 48;
   let count = 0;
-  function add({ x, z, w, d }) {
-    const bounds = { x, z, w: w / 2 + 0.6, d: d / 2 + 0.6 };
+  function add({ x, z, w, d, y = -Infinity, h = Infinity }) {
+    const bounds = { x, z, halfW: w / 2, halfD: d / 2, w: w / 2 + .6, d: d / 2 + .6, bottom: y, top: Number.isFinite(h) ? y + h : Infinity };
     for (let gx = Math.floor((x - bounds.w) / cellSize); gx <= Math.floor((x + bounds.w) / cellSize); gx++) {
       for (let gz = Math.floor((z - bounds.d) / cellSize); gz <= Math.floor((z + bounds.d) / cellSize); gz++) {
         const key = `${gx},${gz}`;
@@ -217,11 +230,69 @@ export function createCollisionIndex() {
     return false;
   }
   function blocked(x, z) {
-    if (basinRadius(x, z) > CITY.walkRadius) return true;
-    if (inRiver(x, z, 0.7) && !onBridge(x)) return true;
+    if (outsideWalkableWorld(x, z)) return true;
     return hasObstacle(x, z);
   }
-  return { add, blocked, hasObstacle, overlapsBox, get count() { return count; } };
+  function outsideWalkableWorld(x, z) {
+    return basinRadius(x, z) > CITY.walkRadius || (inRiver(x, z, .7) && !onBridge(x));
+  }
+  function nearby(minX, minZ, maxX, maxZ) {
+    const found = new Set();
+    for (let gx = Math.floor(minX / cellSize); gx <= Math.floor(maxX / cellSize); gx++) {
+      for (let gz = Math.floor(minZ / cellSize); gz <= Math.floor(maxZ / cellSize); gz++) {
+        for (const bounds of bins.get(`${gx},${gz}`) ?? []) found.add(bounds);
+      }
+    }
+    return found;
+  }
+  function blockedAt(x, z, feetY, height, radius = .28) {
+    if (outsideWalkableWorld(x, z)) return true;
+    for (const b of nearby(x - radius, z - radius, x + radius, z + radius)) {
+      if (feetY < b.top - .015 && feetY + height > b.bottom + .015
+          && Math.abs(x - b.x) < b.halfW + radius && Math.abs(z - b.z) < b.halfD + radius) return true;
+    }
+    return false;
+  }
+  function canOccupy(x, z, feetY, height, radius = .28) {
+    return !blockedAt(x, z, feetY, height, radius);
+  }
+  function surfaceHeightAt(x, z, feetY, maxStep = .38) {
+    let surface = groundHeight(x, z);
+    const supportRadius = .28;
+    for (const b of nearby(x - supportRadius, z - supportRadius, x + supportRadius, z + supportRadius)) {
+      if (Number.isFinite(b.top) && b.top <= feetY + maxStep + .015 && b.top > surface
+          && Math.abs(x - b.x) <= b.halfW + supportRadius && Math.abs(z - b.z) <= b.halfD + supportRadius) surface = b.top;
+    }
+    return surface;
+  }
+  // Camera sphere sweep against height-aware solids. Water and city bounds
+  // constrain the player, while the camera can look across them freely.
+  function segmentFraction(from, to, radius = .24) {
+    let nearest = 1;
+    for (const b of nearby(Math.min(from.x, to.x) - radius, Math.min(from.z, to.z) - radius,
+      Math.max(from.x, to.x) + radius, Math.max(from.z, to.z) + radius)) {
+      let enter = 0, leave = nearest;
+      const ranges = [
+        ['x', b.x - b.halfW - radius, b.x + b.halfW + radius],
+        ['y', b.bottom - radius, b.top + radius],
+        ['z', b.z - b.halfD - radius, b.z + b.halfD + radius],
+      ];
+      for (const [axis, min, max] of ranges) {
+        const direction = to[axis] - from[axis];
+        if (Math.abs(direction) < 1e-9) {
+          if (from[axis] < min || from[axis] > max) { enter = 2;break; }
+        } else {
+          let a = (min - from[axis]) / direction, c = (max - from[axis]) / direction;
+          if (a > c) [a, c] = [c, a];
+          enter = Math.max(enter, a);leave = Math.min(leave, c);
+          if (enter > leave) break;
+        }
+      }
+      if (enter <= leave && leave >= 0 && enter >= 0) nearest = Math.min(nearest, enter);
+    }
+    return nearest;
+  }
+  return { add, blocked, blockedAt, canOccupy, surfaceHeightAt, segmentFraction, hasObstacle, overlapsBox, get count() { return count; } };
 }
 
 export function seededRandom(initial = 20261022) {

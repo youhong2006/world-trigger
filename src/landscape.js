@@ -24,7 +24,7 @@ export function createLandscape(scene) {
   const color = new THREE.Color();
   function vertex(x, z) {
     const h = terrainHeight(x, z);
-    positions.push(x, h - 0.25, z);
+    positions.push(x, h, z);
     const rgb = terrainRGB(x, z, h);
     color.setRGB(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, THREE.SRGBColorSpace);
     colors.push(color.r, color.g, color.b);

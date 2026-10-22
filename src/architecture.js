@@ -118,11 +118,12 @@ export function createArchitecture(scene) {
     const cos = Math.cos(lot.rotation), sin = Math.sin(lot.rotation);
     entry('trim', { x: lot.x + x * cos + z * sin, y: lot.foundation + y + h / 2, z: lot.z - x * sin + z * cos, w, h, d, rotation: lot.rotation, roll, color }, true);
   }
-  function obstacle(lot, x, z, w, d) {
+  function obstacle(lot, x, z, w, d, bottom = .07, height = .57) {
     const cos = Math.cos(lot.rotation), sin = Math.sin(lot.rotation);
     obstacles.push({
       x: lot.x + x * cos + z * sin,
       z: lot.z - x * sin + z * cos,
+      y: lot.foundation + bottom, h: height,
       ...orientedFootprint(w, d, lot.rotation),
     });
   }
@@ -191,7 +192,7 @@ export function createArchitecture(scene) {
         part(lot, parkingX, .99, parkingZ - .12 + end * 1.08, 1.12, .44, .018, '#3e5c6e');
         part(lot, parkingX, .49, parkingZ + end * 1.706, 1.13, .14, .018, end > 0 ? '#bd7c72' : '#dae4d6');
       }
-      obstacle(lot, parkingX, parkingZ, 1.48, 3.4);
+      obstacle(lot, parkingX, parkingZ, 1.48, 3.4, .1, 1.5);
       metrics.parkedCars++;
     }
   }

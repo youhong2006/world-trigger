@@ -4,7 +4,10 @@ import { createHeadquarters } from './headquarters.js';
 import { createCity } from './city.js';
 import { createSky, terrainRGB } from './landscape.js';
 import { PERSON, ARCHITECTURE } from './building-metrics.js';
-import { CITY, BASE, riverZ, groundHeight, createCollisionIndex } from './city-layout.js';
+import { createCharacterMotor } from './character-motor.js';
+import { createPlayerCamera } from './player-camera.js';
+import { createPlayerAvatar } from './player-avatar.js';
+import { CITY, BASE, riverZ, groundHeight, inRiver, createCollisionIndex } from './city-layout.js';
 
 const host = document.querySelector('#scene');
 const scene = new THREE.Scene();
@@ -57,7 +60,7 @@ function box(x, y, z, w, h, d, color, collide = false, parent = scene) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   parent.add(mesh);
-  if (collide) collision.add({ x, z, w, d });
+  if (collide) collision.add({ x, z, w, d, y, h });
   return mesh;
 }
 function cylinder(x, y, z, r, h, color, segments = 8, parent = scene) {
@@ -82,7 +85,7 @@ const headquarters = createHeadquarters({
   scene: baseGroup,
   box(x, y, z, w, h, d, color, collide = false) {
     const mesh = box(x, y, z, w, h, d, color, false, baseGroup);
-    if (collide) collision.add({ x: x * baseScale + baseOffset.x, z: z * baseScale + baseOffset.z, w: w * baseScale, d: d * baseScale });
+    if (collide) collision.add({ x: x * baseScale + baseOffset.x, z: z * baseScale + baseOffset.z, w: w * baseScale, d: d * baseScale, y: y * baseScale, h: h * baseScale });
     return mesh;
   },
   cylinder: (x, y, z, r, h, color, n) => cylinder(x, y, z, r, h, color, n, baseGroup),
@@ -94,18 +97,151 @@ const destinations = [
   { name: '河川敷', pos: new THREE.Vector3(0, groundHeight(0,riverZ(0)-105)+PERSON.eyeHeight, riverZ(0) - 105), yaw: Math.PI, previewPosition: new THREE.Vector3(320, 230, riverZ(0)+430), previewLook: new THREE.Vector3(0, 0, riverZ(0)) },
   { name: '山丘公園', pos: new THREE.Vector3(CITY.lookout.x, groundHeight(CITY.lookout.x,CITY.lookout.z)+PERSON.eyeHeight, CITY.lookout.z), yaw: -1.88, previewPosition: new THREE.Vector3(-2520, 380, 650), previewLook: new THREE.Vector3(-2000, 30, 120) },
 ];
-let exploring=false,yaw=0,pitch=0,keys={},target=null,day=true,current=0;const walking=document.querySelector('#walking');const clock=new THREE.Clock();const toast=document.querySelector('#toast');let toastTimer;
-function notify(t){toast.textContent=t;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),2600);}
-function enter(){camera.fov=PERSON.walkingFov;camera.near=.15;camera.updateProjectionMatrix();exploring=true;document.body.classList.add('exploring');document.body.classList.remove('overview');walking.hidden=false;camera.position.copy(destinations[current].pos);yaw=destinations[current].yaw;pitch=destinations[current].pitch??0;target=null;camera.rotation.order='YXZ';camera.rotation.set(pitch,yaw,0);try{renderer.domElement.requestPointerLock()?.catch(()=>notify('可按住畫面拖曳視角，使用 WASD 移動'));}catch{notify('按住畫面拖曳視角，使用 WASD 移動');}}
-function leave(){camera.fov=51;camera.near=5;camera.updateProjectionMatrix();exploring=false;keys={};document.body.classList.remove('exploring');document.body.classList.add('overview');walking.hidden=true;document.exitPointerLock?.();target={pos:overviewPosition.clone(),look:overviewLook.clone()};}
-document.querySelector('#enter').onclick=enter;document.addEventListener('pointerlockchange',()=>{if(!document.pointerLockElement&&exploring)leave();});
-document.querySelectorAll('.place').forEach(b=>b.onclick=()=>{current=Number(b.dataset.place);document.querySelectorAll('.place').forEach(p=>p.classList.toggle('active',p===b));document.body.classList.remove('overview');const dest=destinations[current];target={pos:dest.previewPosition?.clone()??dest.pos.clone().add(new THREE.Vector3(28,22,32)),look:dest.previewLook?.clone()??dest.pos.clone().add(new THREE.Vector3(0,3,-14))};notify('已抵達 '+dest.name+' · 點擊開始漫遊進入街道');document.querySelector('#location').textContent=dest.name;});
-document.querySelector('#reset').onclick=()=>{if(exploring)leave();current=0;document.body.classList.add('overview');target={pos:overviewPosition.clone(),look:overviewLook.clone()};document.querySelectorAll('.place').forEach((p,i)=>p.classList.toggle('active',i===0));document.querySelector('#location').textContent='住宅街';};
+const motor = createCharacterMotor({ groundHeight, collision });
+const playerView = createPlayerCamera({ camera, collision, groundHeight: (x, z) => Math.max(groundHeight(x, z), inRiver(x, z) ? .4 : -Infinity) });
+const avatar = createPlayerAvatar(scene);
+let exploring = false, yaw = 0, pitch = 0, keys = {}, target = null, day = true, current = 0;
+let crouchRequested = false, jumpQueued = false, keepExploringOnUnlock = false, safeSpawn = null;
+const walking = document.querySelector('#walking');
+const clock = new THREE.Clock();
+const toast = document.querySelector('#toast');
+let toastTimer, lastHud = '';
+const movementLabels = { idle: '站立', walk: '行走', run: '跑步', jump: '起跳', fall: '空中', land: '落地', crouch: '蹲下', 'crouch-walk': '蹲走' };
+function notify(text) {
+  toast.textContent = text;toast.classList.add('show');clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
+}
+function viewState() { return { position: motor.position, eyeHeight: motor.eyeHeight, yaw, pitch }; }
+function syncPlayerHud() {
+  const signature = `${playerView.mode}/${motor.crouched}/${motor.animation}`;
+  if (signature === lastHud) return;
+  lastHud = signature;
+  const third = playerView.mode === 'third';
+  document.body.classList.toggle('third-person', third);
+  document.querySelector('#camera-view').textContent = `V · ${third ? '第三人稱' : '第一人稱'}`;
+  document.querySelector('#camera-view').setAttribute('aria-pressed', String(third));
+  document.querySelector('#crouch-toggle').textContent = `C · ${motor.crouched ? '站起' : '蹲下'}`;
+  document.querySelector('#crouch-toggle').setAttribute('aria-pressed', String(motor.crouched));
+  document.querySelector('#movement-state').textContent = movementLabels[motor.animation] ?? '站立';
+}
+function lockPointer() {
+  keepExploringOnUnlock = false;
+  if (document.pointerLockElement === renderer.domElement) return;
+  try { renderer.domElement.requestPointerLock()?.catch(() => notify('按住畫面拖曳視角，使用 WASD 移動')); }
+  catch { notify('按住畫面拖曳視角，使用 WASD 移動'); }
+}
+function enter() {
+  exploring = true;keys = {};crouchRequested = jumpQueued = false;lastHud = '';
+  document.body.classList.add('exploring');document.body.classList.remove('overview');walking.hidden = false;
+  const destination = destinations[current];
+  yaw = destination.yaw;pitch = destination.pitch ?? 0;target = null;
+  safeSpawn = { point: { x: destination.pos.x, y: destination.pos.y - PERSON.eyeHeight, z: destination.pos.z }, yaw, pitch };
+  motor.teleport(safeSpawn.point, yaw);playerView.reset();playerView.update(0, viewState());
+  avatar.update(0, motor.state);avatar.setVisible(playerView.avatarVisible);syncPlayerHud();lockPointer();
+}
+function leave() {
+  exploring = false;keys = {};jumpQueued = false;keepExploringOnUnlock = false;
+  avatar.setVisible(false);document.body.classList.remove('exploring', 'third-person');document.body.classList.add('overview');walking.hidden = true;
+  camera.fov = 51;camera.near = 5;camera.updateProjectionMatrix();
+  if (document.pointerLockElement) document.exitPointerLock?.();
+  target = { pos: overviewPosition.clone(), look: overviewLook.clone() };
+}
+function respawn() {
+  if (!exploring || !safeSpawn) return;
+  keys = {};crouchRequested = jumpQueued = false;yaw = safeSpawn.yaw;pitch = safeSpawn.pitch;
+  motor.teleport(safeSpawn.point, yaw);playerView.reset();playerView.update(0, viewState());
+  avatar.update(0, motor.state);avatar.setVisible(playerView.avatarVisible);syncPlayerHud();notify('已返回本次漫遊起點');
+}
+function toggleView() {
+  if (!exploring) return;
+  playerView.toggle();playerView.update(0, viewState());avatar.setVisible(playerView.avatarVisible);syncPlayerHud();
+}
+function toggleCrouch() { if (exploring) crouchRequested = motor.crouched ? false : !crouchRequested; }
+document.querySelector('#enter').onclick = enter;
+document.querySelector('#camera-view').onclick = toggleView;
+document.querySelector('#crouch-toggle').onclick = toggleCrouch;
+document.querySelector('#player-reset').onclick = respawn;
+document.addEventListener('pointerlockchange', () => {
+  // Remember the intended cursor mode even if an earlier asynchronous lock
+  // request resolves after Tab. Releasing it for HUD controls keeps playing.
+  if (document.pointerLockElement && exploring && keepExploringOnUnlock) {
+    document.exitPointerLock();return;
+  }
+  if (!document.pointerLockElement && exploring) {
+    keys = {};
+    if (keepExploringOnUnlock) return;
+    leave();
+  }
+});
+document.querySelectorAll('.place').forEach(button => button.onclick = () => {
+  if (exploring) leave();
+  current = Number(button.dataset.place);
+  document.querySelectorAll('.place').forEach(place => place.classList.toggle('active', place === button));
+  document.body.classList.remove('overview');
+  const destination = destinations[current];
+  target = { pos: destination.previewPosition.clone(), look: destination.previewLook.clone() };
+  notify('已抵達 ' + destination.name + ' · 點擊開始漫遊進入街道');
+  document.querySelector('#location').textContent = destination.name;
+});
+document.querySelector('#reset').onclick = () => {
+  if (exploring) { respawn();return; }
+  current = 0;document.body.classList.add('overview');target = { pos: overviewPosition.clone(), look: overviewLook.clone() };
+  document.querySelectorAll('.place').forEach((place, i) => place.classList.toggle('active', i === 0));
+  document.querySelector('#location').textContent = '住宅街';
+};
 document.querySelector('#day').onclick=()=>{day=!day;sky.setDay(day);scene.fog.color.set(day?'#accdd9':'#233c50');ambient.intensity=day?1.9:.7;sun.intensity=day?2.5:.3;city.clouds.material.opacity=day?.86:.2;sun.color.set(day?'#ffeed1':'#b8d5fc');document.querySelector('#day').innerHTML=day?'☀ <span>日間</span>':'☾ <span>夜間</span>';};
 const guide=document.querySelector('#guide');document.querySelector('#help').onclick=()=>{if(exploring)leave();guide.showModal();};document.querySelector('#close-guide').onclick=()=>guide.close();guide.addEventListener('click',e=>{if(e.target===guide){const r=guide.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)guide.close();}});
 let audioCtx,noiseSource,audioGain,soundOn=false;document.querySelector('#sound').onclick=async()=>{try{if(!audioCtx){audioCtx=new AudioContext();const buffer=audioCtx.createBuffer(1,audioCtx.sampleRate*4,audioCtx.sampleRate);const samples=buffer.getChannelData(0);let v=0;for(let i=0;i<samples.length;i++){v=(v+(Math.random()*2-1)*.03)/1.02;samples[i]=v;}noiseSource=audioCtx.createBufferSource();noiseSource.buffer=buffer;noiseSource.loop=true;const filter=audioCtx.createBiquadFilter();filter.type='lowpass';filter.frequency.value=550;audioGain=audioCtx.createGain();audioGain.gain.value=0;noiseSource.connect(filter).connect(audioGain).connect(audioCtx.destination);noiseSource.start();}await audioCtx.resume();soundOn=!soundOn;audioGain.gain.setTargetAtTime(soundOn?.45:0,audioCtx.currentTime,.5);document.querySelector('#sound').innerHTML=soundOn?'♫ <span>音效開啟</span>':'♫ <span>音效關閉</span>';}catch{notify('此瀏覽器不支援環境音效');}};
-window.addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();keys[e.code]=true;if(e.code==='Escape'&&exploring)leave();});window.addEventListener('keyup',e=>keys[e.code]=false);window.addEventListener('blur',()=>keys={});let dragging=false,lastX=0,lastY=0;
-renderer.domElement.addEventListener('pointerdown',e=>{if(exploring||document.body.classList.contains('overview')){dragging=true;lastX=e.clientX;lastY=e.clientY;if(document.pointerLockElement!==renderer.domElement)renderer.domElement.setPointerCapture(e.pointerId);}});window.addEventListener('pointerup',()=>dragging=false);window.addEventListener('pointermove',e=>{if(!exploring){if(dragging&&document.body.classList.contains('overview')){target=null;const offset=camera.position.clone().sub(overviewLook),sphere=new THREE.Spherical().setFromVector3(offset);sphere.theta-=(e.clientX-lastX)*.003;sphere.phi=THREE.MathUtils.clamp(sphere.phi+(e.clientY-lastY)*.002,.45,1.4);camera.position.copy(overviewLook).add(new THREE.Vector3().setFromSpherical(sphere));camera.lookAt(overviewLook);lastX=e.clientX;lastY=e.clientY;}return;}if(document.pointerLockElement===renderer.domElement||dragging){let dx=document.pointerLockElement?e.movementX:e.clientX-lastX,dy=document.pointerLockElement?e.movementY:e.clientY-lastY;yaw-=dx*.002;pitch=THREE.MathUtils.clamp(pitch-dy*.002,-1.35,1.35);lastX=e.clientX;lastY=e.clientY;}});
+window.addEventListener('keydown', event => {
+  if (guide.open) return;
+  if (exploring && (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)
+      || (event.code === 'Tab' && document.pointerLockElement))) event.preventDefault();
+  keys[event.code] = true;
+  if (!exploring) return;
+  if (event.code === 'Escape') { leave();return; }
+  if (event.repeat) return;
+  if (event.code === 'Space') jumpQueued = true;
+  if (event.code === 'KeyV') toggleView();
+  if (event.code === 'KeyC') toggleCrouch();
+  if (event.code === 'KeyR') respawn();
+  if (event.code === 'Tab') {
+    keepExploringOnUnlock = true;
+    if (document.pointerLockElement) document.exitPointerLock();
+    notify('游標已釋放，可使用下方按鈕；點擊場景繼續環顧');
+  }
+});
+window.addEventListener('keyup', event => { keys[event.code] = false; });
+window.addEventListener('blur', () => { keys = {};jumpQueued = false; });
+let dragging = false, lastX = 0, lastY = 0;
+renderer.domElement.addEventListener('pointerdown', event => {
+  if (exploring || document.body.classList.contains('overview')) {
+    dragging = true;lastX = event.clientX;lastY = event.clientY;
+    if (document.pointerLockElement !== renderer.domElement) {
+      if (exploring && event.pointerType === 'mouse') lockPointer();
+      else renderer.domElement.setPointerCapture(event.pointerId);
+    }
+  }
+});
+window.addEventListener('pointerup', () => { dragging = false; });
+window.addEventListener('pointermove', event => {
+  if (!exploring) {
+    if (dragging && document.body.classList.contains('overview')) {
+      target = null;
+      const offset = camera.position.clone().sub(overviewLook), sphere = new THREE.Spherical().setFromVector3(offset);
+      sphere.theta -= (event.clientX - lastX) * .003;
+      sphere.phi = THREE.MathUtils.clamp(sphere.phi + (event.clientY - lastY) * .002, .45, 1.4);
+      camera.position.copy(overviewLook).add(new THREE.Vector3().setFromSpherical(sphere));camera.lookAt(overviewLook);
+      lastX = event.clientX;lastY = event.clientY;
+    }
+    return;
+  }
+  if (document.pointerLockElement === renderer.domElement || dragging) {
+    const locked = document.pointerLockElement === renderer.domElement;
+    yaw -= (locked ? event.movementX : event.clientX - lastX) * .002;
+    pitch = THREE.MathUtils.clamp(pitch - (locked ? event.movementY : event.clientY - lastY) * .002, -1.35, 1.35);
+    lastX = event.clientX;lastY = event.clientY;
+  }
+});
 const mc=document.querySelector('#minimap'),ctx=mc.getContext('2d');
 const mapBackground=document.createElement('canvas');mapBackground.width=360;mapBackground.height=260;
 const mapCtx=mapBackground.getContext('2d');
@@ -127,15 +263,42 @@ const mapBaseWidth=BASE.width*baseScale/mapHalfX*180,mapBaseDepth=BASE.depth*bas
 mapCtx.fillStyle='#8d9cb2';mapCtx.fillRect(baseX-mapBaseWidth/2,baseZ-mapBaseDepth/2,mapBaseWidth,mapBaseDepth);
 mapCtx.fillStyle='#b9c4d6';mapCtx.fillRect(baseX-mapBaseWidth/2+BASE.wallThickness*baseScale/mapHalfX*180,baseZ-mapBaseDepth/2+BASE.wallThickness*baseScale/mapHalfZ*130,(BASE.width-BASE.wallThickness*2)*baseScale/mapHalfX*180,(BASE.depth-BASE.wallThickness*2)*baseScale/mapHalfZ*130);
 mapCtx.font='8px sans-serif';mapCtx.fillStyle='#294638';mapCtx.fillText('BORDER',baseX-15,baseZ-3);
-function drawMap(){ctx.drawImage(mapBackground,0,0);const [px,pz]=mapPoint(camera.position.x,camera.position.z);if(exploring){ctx.fillStyle='#214f39';ctx.beginPath();ctx.arc(px,pz,4,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#214f3977';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(px,pz,7,0,Math.PI*2);ctx.moveTo(px,pz);ctx.lineTo(px-Math.sin(yaw)*13,pz-Math.cos(yaw)*13);ctx.stroke();}else{ctx.strokeStyle='#fff7';ctx.beginPath();ctx.moveTo(140,260);ctx.lineTo(baseX-30,baseZ);ctx.lineTo(baseX+30,baseZ);ctx.lineTo(220,260);ctx.stroke();}document.querySelector('#coordinates').textContent=exploring?`X ${Math.round(camera.position.x)} / Z ${Math.round(camera.position.z)}`:'約 7 × 6 km';}
-function blocked(x,z){return collision.blocked(x,z);}
-let frames=0;renderer.setAnimationLoop(()=>{const elapsed=Math.min(clock.getDelta(),.5),dt=Math.min(elapsed,.05);if(exploring){camera.rotation.set(pitch,yaw,0,'YXZ');let f=Number(!!(keys.KeyW||keys.ArrowUp))-Number(!!(keys.KeyS||keys.ArrowDown)),s=Number(!!(keys.KeyD||keys.ArrowRight))-Number(!!(keys.KeyA||keys.ArrowLeft));const length=Math.hypot(f,s)||1,speed=(keys.ShiftLeft||keys.ShiftRight?PERSON.sprintSpeed:PERSON.walkSpeed)*dt;let dx=(-Math.sin(yaw)*f+Math.cos(yaw)*s)/length*speed,dz=(-Math.cos(yaw)*f-Math.sin(yaw)*s)/length*speed;const nx=camera.position.x+dx,nz=camera.position.z+dz;if(!blocked(nx,camera.position.z))camera.position.x=nx;if(!blocked(camera.position.x,nz))camera.position.z=nz;const ground=groundHeight(camera.position.x,camera.position.z);camera.position.y=THREE.MathUtils.lerp(camera.position.y,ground+PERSON.eyeHeight,Math.min(1,dt*10));}else if(target){camera.position.lerp(target.pos,1-Math.exp(-elapsed*2.5));camera.lookAt(target.look);if(camera.position.distanceTo(target.pos)<.03)target=null;}if(++frames%8===0)drawMap();city.architecture.update(camera);renderer.render(scene,camera);});
+function drawMap(){ctx.drawImage(mapBackground,0,0);const mapPosition=exploring?motor.position:camera.position;const [px,pz]=mapPoint(mapPosition.x,mapPosition.z);if(exploring){ctx.fillStyle='#214f39';ctx.beginPath();ctx.arc(px,pz,4,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#214f3977';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(px,pz,7,0,Math.PI*2);ctx.moveTo(px,pz);ctx.lineTo(px-Math.sin(yaw)*13,pz-Math.cos(yaw)*13);ctx.stroke();}else{ctx.strokeStyle='#fff7';ctx.beginPath();ctx.moveTo(140,260);ctx.lineTo(baseX-30,baseZ);ctx.lineTo(baseX+30,baseZ);ctx.lineTo(220,260);ctx.stroke();}document.querySelector('#coordinates').textContent=exploring?`X ${Math.round(mapPosition.x)} / Z ${Math.round(mapPosition.z)}`:'約 7 × 6 km';}
+let frames = 0;
+renderer.setAnimationLoop(() => {
+  const elapsed = Math.min(clock.getDelta(), .5);
+  if (exploring) {
+    motor.update(Math.min(elapsed, .25), {
+      forward: Number(!!(keys.KeyW || keys.ArrowUp)) - Number(!!(keys.KeyS || keys.ArrowDown)),
+      strafe: Number(!!(keys.KeyD || keys.ArrowRight)) - Number(!!(keys.KeyA || keys.ArrowLeft)),
+      sprint: !!(keys.ShiftLeft || keys.ShiftRight), crouch: crouchRequested,
+      jump: !!keys.Space, jumpPressed: jumpQueued,
+    }, yaw);
+    jumpQueued = false;
+    const point = motor.position;
+    if (![point.x, point.y, point.z].every(Number.isFinite) || point.y < groundHeight(point.x, point.z) - 8) respawn();
+    playerView.update(elapsed, viewState());
+    avatar.update(Math.min(elapsed, .25), motor.state);avatar.setVisible(playerView.avatarVisible);syncPlayerHud();
+  } else if (target) {
+    camera.position.lerp(target.pos, 1 - Math.exp(-elapsed * 2.5));camera.lookAt(target.look);
+    if (camera.position.distanceTo(target.pos) < .03) target = null;
+  }
+  if (++frames % 8 === 0) drawMap();
+  city.architecture.update(camera);renderer.render(scene, camera);
+});
 window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});drawMap();
 // Read-only diagnostics for smoke tests and development.
-window.__mikado={get state(){return {exploring,day,current,position:camera.position.toArray(),surfaceHeight:groundHeight(camera.position.x,camera.position.z),objects:scene.children.length,city:{architecture:{style:'anime-japanese',footprintScale:ARCHITECTURE.footprintScale,enlargement:ARCHITECTURE.enlargement,layout:'continuous-frontage',floorHeight:ARCHITECTURE.floorHeight,doorHeight:ARCHITECTURE.doorHeight,eyeHeight:PERSON.eyeHeight,...city.architecture.metrics},terrainMode:'continuous-basin',cityShape:'irregular',riverCenter:riverZ(0),basinWidth:CITY.basinX*2,basinDepth:CITY.basinZ*2,buildings:city.lots.length,trees:city.trees,bridges:city.bridges,bounds:CITY.halfSize,riverDirection:'east-west',headquartersCenter:[0,-150]},headquarters:{name:headquarters.name,enlargement:BASE.enlargement,openRoof:headquarters.openRoof,wallCount:headquarters.wallCount,courtyard:{width:headquarters.courtyard.width*baseScale,depth:headquarters.courtyard.depth*baseScale},width:headquarters.width*baseScale,depth:headquarters.depth*baseScale,height:headquarters.height*baseScale,towers:headquarters.towers,emblems:headquarters.emblems}};}};
+window.__mikado={get state(){return {exploring,day,current,position:camera.position.toArray(),surfaceHeight:groundHeight(camera.position.x,camera.position.z),objects:scene.children.length,player:{...motor.state,view:playerView.diagnostics,avatar:avatar.diagnostics},city:{architecture:{style:'anime-japanese',footprintScale:ARCHITECTURE.footprintScale,enlargement:ARCHITECTURE.enlargement,layout:'continuous-frontage',floorHeight:ARCHITECTURE.floorHeight,doorHeight:ARCHITECTURE.doorHeight,eyeHeight:PERSON.eyeHeight,...city.architecture.metrics},terrainMode:'continuous-basin',cityShape:'irregular',riverCenter:riverZ(0),basinWidth:CITY.basinX*2,basinDepth:CITY.basinZ*2,buildings:city.lots.length,trees:city.trees,bridges:city.bridges,bounds:CITY.halfSize,riverDirection:'east-west',headquartersCenter:[0,-150]},headquarters:{name:headquarters.name,enlargement:BASE.enlargement,openRoof:headquarters.openRoof,wallCount:headquarters.wallCount,courtyard:{width:headquarters.courtyard.width*baseScale,depth:headquarters.courtyard.depth*baseScale},width:headquarters.width*baseScale,depth:headquarters.depth*baseScale,height:headquarters.height*baseScale,towers:headquarters.towers,emblems:headquarters.emblems}};}};
 
 const overviewButton=document.querySelector('#overview');
 overviewButton.onclick=()=>{if(exploring)leave();document.body.classList.add('overview');target={pos:overviewPosition.clone(),look:overviewLook.clone()};document.querySelector('#location').textContent='三門市全域';};
-renderer.domElement.addEventListener('wheel',e=>{if(exploring||!document.body.classList.contains('overview'))return;e.preventDefault();target=null;const offset=camera.position.clone().sub(overviewLook);offset.setLength(THREE.MathUtils.clamp(offset.length()*Math.exp(e.deltaY*.0007),3000,14000));camera.position.copy(overviewLook).add(offset);camera.lookAt(overviewLook);},{passive:false});
+renderer.domElement.addEventListener('wheel', event => {
+  if (exploring) { event.preventDefault();playerView.zoom(event.deltaY);return; }
+  if (!document.body.classList.contains('overview')) return;
+  event.preventDefault();target = null;
+  const offset = camera.position.clone().sub(overviewLook);
+  offset.setLength(THREE.MathUtils.clamp(offset.length() * Math.exp(event.deltaY * .0007), 3000, 14000));
+  camera.position.copy(overviewLook).add(offset);camera.lookAt(overviewLook);
+}, { passive: false });
 document.body.classList.add('overview');
 document.querySelector('#location').textContent='三門市全域';
