@@ -29,6 +29,10 @@ try {
   };
 }
 
+import { createHQInterior } from './hq-interior.js';
+import { createHQController } from './hq-ui.js';
+import { createHQTraining } from './hq-training.js';
+import { HQ } from './hq-layout.js';
 import { createHeadquarters } from './headquarters.js';
 import { createCity } from './city.js';
 import { createSky, terrainRGB } from './landscape.js';
@@ -36,7 +40,14 @@ import { PERSON, ARCHITECTURE } from './building-metrics.js';
 import { createCharacterMotor } from './character-motor.js';
 import { createPlayerCamera } from './player-camera.js';
 import { createPlayerAvatar } from './player-avatar.js';
-import { CITY, BASE, riverZ, groundHeight, inRiver, createCollisionIndex } from './city-layout.js';
+import {
+  CITY,
+  BASE,
+  riverZ,
+  groundHeight as cityGroundHeight,
+  inRiver,
+  createCollisionIndex,
+} from './city-layout.js';
 
 const host = document.querySelector('#scene');
 const scene = new THREE.Scene();
@@ -86,7 +97,23 @@ function mat(color) {
   if (!materials.has(color)) materials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.9 }));
   return materials.get(color);
 }
-const collision = createCollisionIndex();
+let hqTraining = null,
+  hqController = null;
+const worldCollision = createCollisionIndex();
+const collision = { ...worldCollision };
+for (const key of [
+  'canOccupy',
+  'blockedAt',
+  'blocked',
+  'surfaceHeightAt',
+  'segmentFraction',
+  'hasObstacle',
+  'overlapsBox',
+])
+  collision[key] = (...args) => (hqTraining?.active ? hqTraining.index : worldCollision)[key](...args);
+function groundHeight(x, z) {
+  return hqTraining?.active ? hqTraining.y : cityGroundHeight(x, z);
+}
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
 function box(x, y, z, w, h, d, color, collide = false, parent = scene) {
   const mesh = new THREE.Mesh(unitBox, mat(color));
@@ -118,6 +145,22 @@ baseGroup.position.copy(baseOffset);
 scene.add(baseGroup);
 const headquarters = createHeadquarters({
   scene: baseGroup,
+  solid(v) {
+    worldCollision.add({
+      x: v.x * baseScale + baseOffset.x,
+      z: v.z * baseScale + baseOffset.z,
+      w: v.w * baseScale,
+      d: v.d * baseScale,
+      y: v.y * baseScale,
+      h: v.h * baseScale,
+      planes: v.planes.map(([nx, ny, nz, c]) => [
+        nx,
+        ny,
+        nz,
+        c * baseScale + nx * baseOffset.x + nz * baseOffset.z,
+      ]),
+    });
+  },
   box(x, y, z, w, h, d, color, collide = false) {
     const mesh = box(x, y, z, w, h, d, color, false, baseGroup);
     if (collide)
@@ -133,6 +176,8 @@ const headquarters = createHeadquarters({
   },
   cylinder: (x, y, z, r, h, color, n) => cylinder(x, y, z, r, h, color, n, baseGroup),
 });
+const hqInterior = createHQInterior({ scene, collision: worldCollision });
+const hqWorldObjects = scene.children.filter((o) => !o.isLight);
 const residentialZ = Math.round((riverZ(-1008) + 200 - 72) / 144) * 144 + 72;
 const destinations = [
   {
@@ -144,9 +189,9 @@ const destinations = [
   },
   {
     name: 'BORDER 本部',
-    pos: new THREE.Vector3(0, groundHeight(0, 460) + PERSON.eyeHeight, 460),
+    pos: new THREE.Vector3(0, groundHeight(0, 302) + PERSON.eyeHeight, 302),
     yaw: 0,
-    pitch: 0.65,
+    pitch: 0.08,
     previewPosition: new THREE.Vector3(1350, 2800, 1350),
     previewLook: new THREE.Vector3(0, 300, -150),
   },
@@ -181,6 +226,7 @@ const motor = createCharacterMotor({
 const playerView = createPlayerCamera({
   camera,
   collision,
+  getIgnored: () => hqController?.seatSolids,
   groundHeight: (x, z) => Math.max(groundHeight(x, z), inRiver(x, z) ? 0.4 : -Infinity),
 });
 const avatar = createPlayerAvatar(scene);
@@ -267,8 +313,8 @@ const melee = createMeleeCombat({
     if (type === 'swing') rangeStrikeHits.clear();
     if (type === 'strike') {
       battle.strike(detail, playerBattleState());
-      if (range.snapshot.phase === 'active')
-        for (const t of range.targets) {
+      if (hqTraining?.active || range.snapshot.phase === 'active')
+        for (const t of getTargets()) {
           const dx = t.position.x - position.x,
             dz = t.position.z - position.z,
             d = Math.hypot(dx, dz);
@@ -280,7 +326,8 @@ const melee = createMeleeCombat({
             traceWorld(position, t.position, 0.05) > 0.999
           ) {
             rangeStrikeHits.add(t.id);
-            range.hit(t.id, detail.damage);
+            if (hqTraining?.active) hqTraining.hit(t.id, detail.damage);
+            else range.hit(t.id, detail.damage);
           }
         }
     }
@@ -321,6 +368,7 @@ const battle = createBattleSession({
   onFinish: finishBattle,
 });
 function getTargets() {
+  if (hqTraining?.active) return hqTraining.targets;
   return battle.phase === 'idle' ? range.targets : battle.targets;
 }
 function playerBattleState() {
@@ -372,6 +420,8 @@ function finishBattle(result) {
   syncPlayerHud(true);
 }
 function startBattle(options = {}) {
+  hqTraining?.stop();
+  hqController?.reset();
   if (
     ![...armory.profile.main, ...armory.profile.sub].some(
       (id) => id === 'blade' || SHOOTING_TYPES.includes(id),
@@ -470,6 +520,7 @@ const shooting = createShootingSystem({
     battleEffects.event(type, detail);
     weaponRevision++;
     if (type === 'shot') {
+      hqTraining?.recordShot();
       range.recordShot();
       battle.recordShot();
     }
@@ -480,7 +531,8 @@ const shooting = createShootingSystem({
     }
   },
   onHit(id, damage, point, bullet) {
-    if (battle.phase !== 'idle') battle.hit(id, damage, point, bullet);
+    if (hqTraining?.active) hqTraining.hit(id, damage);
+    else if (battle.phase !== 'idle') battle.hit(id, damage, point, bullet);
     else range.hit(id, damage);
   },
 });
@@ -573,6 +625,7 @@ function currentAim() {
   });
 }
 function prepareCube() {
+  if (hqController?.seated) return;
   if (!exploring || paused || endedChallenge()) return;
   const gun = selectedGun();
   firingMenu.activate(gun.type);
@@ -593,6 +646,7 @@ function prepareCube() {
   if (!shooting.prepare(gun.side, gun.type, gun.config)) notify('此側仍在發射中，或戰鬥體需要重整');
 }
 function fireCurrent() {
+  if (hqController?.seated) return;
   if (!exploring || paused || endedChallenge()) return;
   const gun = selectedGun();
   if (!body.usable(gun.side) || battle.phase === 'bailout') return;
@@ -605,7 +659,7 @@ function fireCurrent() {
   if (melee.snapshot.phase !== 'idle') melee.cancel();
   if (!SHOOTING_TYPES.includes(gun.type)) {
     if (performance.now() - lastShotNotice > 1800) {
-      notify('按 F 切換射擊側，或用數字鍵啟動射擊槽位');
+      notify(`按 ${keyLabel(settings.bindings.swapSide)} 切換射擊側，或用數字鍵啟動射擊槽位`);
       lastShotNotice = performance.now();
     }
     return;
@@ -662,6 +716,8 @@ function finishChallenge(result) {
   syncPlayerHud(true);
 }
 function startChallenge() {
+  hqTraining?.stop();
+  hqController?.reset();
   const p = armory.profile;
   let side = ['main', 'sub'].find((side) => SHOOTING_TYPES.includes(armory.active(side)));
   if (!side) {
@@ -759,7 +815,7 @@ function updateWeaponHud() {
 function viewState() {
   return {
     position: motor.position,
-    eyeHeight: motor.eyeHeight,
+    eyeHeight: hqController?.seated ? (playerView.mode === 'third' ? 1.5 : 1.2) : motor.eyeHeight,
     yaw,
     pitch,
     speed: motor.speed,
@@ -802,7 +858,7 @@ function clearInput() {
 function syncPlayerHud(force = false) {
   const core = combat.snapshot,
     gh = grasshopper.snapshot;
-  const signature = `${playerView.mode}/${motor.crouched}/${motor.animation}/${core.remaining.toFixed(1)}/${core.state}/${motor.speed.toFixed(1)}/${Math.round(motor.position.y)}/${gh.pads.length}/${core.recovery}/${JSON.stringify(settings.bindings)}/${weaponRevision}/${Math.round(range.snapshot.remaining * 10)}`;
+  const signature = `${hqController?.seated}/${playerView.mode}/${motor.crouched}/${motor.animation}/${core.remaining.toFixed(1)}/${core.state}/${motor.speed.toFixed(1)}/${Math.round(motor.position.y)}/${gh.pads.length}/${core.recovery}/${JSON.stringify(settings.bindings)}/${weaponRevision}/${Math.round(range.snapshot.remaining * 10)}`;
   syncBattleHud();
   if (!force && signature === lastHud) return;
   lastHud = signature;
@@ -818,11 +874,15 @@ function syncPlayerHud(force = false) {
     ? '準備蚱蜢'
     : motor.state.boosted
       ? '彈射'
-      : movementLabels[motor.animation];
+      : hqController?.seated
+        ? '就座休息'
+        : movementLabels[motor.animation];
   document.querySelector('#speed-value').textContent = motor.speed.toFixed(1);
-  document.querySelector('#height-value').textContent = motor.grounded
-    ? '已接地'
-    : `離地 ${Math.max(0, motor.position.y - groundHeight(motor.position.x, motor.position.z)).toFixed(0)} m`;
+  document.querySelector('#height-value').textContent = hqController?.seated
+    ? '座位'
+    : motor.grounded
+      ? '已接地'
+      : `離地 ${Math.max(0, motor.position.y - groundHeight(motor.position.x, motor.position.z)).toFixed(0)} m`;
   document.querySelector('#trion-value').textContent = core.remaining.toFixed(1);
   document.querySelector('#trion-bar').value = core.remaining;
   document.querySelector('#system-state').textContent = {
@@ -897,7 +957,7 @@ function applySettings(value) {
   syncPlayerHud(true);
 }
 function lockPointer() {
-  if (paused || !exploring) return;
+  if (paused || !exploring || hqController?.isOpen) return;
   pointerIntent = 'game';
   if (document.pointerLockElement === renderer.domElement) return;
   try {
@@ -931,6 +991,8 @@ function resume() {
   syncPlayerHud(true);
 }
 function enter() {
+  hqTraining?.stop();
+  hqController?.reset();
   if (ui.isOpen) ui.close();
   range.reset();
   battle.reset();
@@ -969,6 +1031,8 @@ function enter() {
   lockPointer();
 }
 function leave() {
+  hqTraining?.stop();
+  hqController?.reset();
   feedback = 0;
   document.querySelector('#damage-feedback').style.opacity = '0';
   exploring = false;
@@ -998,6 +1062,16 @@ function leave() {
   renderRequested = true;
 }
 function respawn() {
+  hqController?.reset();
+  if (hqTraining?.active) {
+    hqTraining.retry();
+    body.reset();
+    combat.reset();
+    melee.reset();
+    shooting.reset();
+    grasshopper.reset();
+    return;
+  }
   if (battle.phase !== 'idle') {
     const { mode, difficulty } = battle.snapshot;
     startBattle({ mode, difficulty });
@@ -1043,6 +1117,7 @@ function toggleCrouch() {
   if (exploring && !paused) crouchRequested = motor.crouched ? false : !crouchRequested;
 }
 function beginCast() {
+  if (hqController?.seated) return;
   if (!exploring || paused || endedChallenge() || combat.snapshot.state === 'exhausted') return;
   if (!activeTrigger('grasshopper') || !melee.can('grasshopper') || battle.phase === 'bailout') {
     notify('目前啟動的槽位沒有蚱蜢，請用數字鍵切換');
@@ -1090,9 +1165,67 @@ document.querySelector('#finish-challenge').onclick = () => {
   respawn();
   document.querySelector('#challenge-result').hidden = true;
 };
+hqTraining = createHQTraining({
+  scene,
+  worldObjects: hqWorldObjects,
+  motor,
+  storage,
+  notify,
+  onTransition(a, b) {
+    clearInput();
+    shooting.reset();
+    grasshopper.reset();
+    melee.reset();
+    yaw = a;
+    pitch = b;
+    playerView.reset();
+    document.querySelector('#challenge-result').hidden = true;
+  },
+});
+hqController = createHQController({
+  interior: hqInterior,
+  collision: worldCollision,
+  motor,
+  getView: () => ({ ...viewState(), eyeHeight: motor.eyeHeight }),
+  getKey: () => keyLabel(settings.bindings.interact),
+  notify,
+  onOpen() {
+    pause();
+    pointerIntent = 'hq';
+  },
+  onClose() {
+    resume();
+    lockPointer();
+  },
+  onConsole(tab) {
+    clearInput();
+    ui.open(tab);
+  },
+  onTraining() {
+    range.reset();
+    battle.reset();
+    shooting.reset();
+    grasshopper.reset();
+    hqTraining.start(viewState());
+  },
+  getMedical: () =>
+    Object.entries(body.snapshot.parts)
+      .map(
+        ([id, p]) =>
+          `${BODY_PARTS[id]?.name ?? id}：${p.destroyed ? '破壞' : Math.round(p.health ?? p.integrity ?? 100)}`,
+      )
+      .join('\n'),
+  getTrainingRecord: () => hqTraining.snapshot.best,
+  getInventory: () =>
+    `目前配裝：${armory.profile.name}\n主槽：${armory.profile.main.map((id) => TRIGGERS[id]?.name ?? id).join('、')}\n副槽：${armory.profile.sub.map((id) => TRIGGERS[id]?.name ?? id).join('、')}`,
+});
 document.querySelector('#prepare-cube').onclick = prepareCube;
 document.querySelector('#fire-cube').onclick = () => {
   fireCurrent();
+};
+document.querySelector('#enter-hq').onclick = () => {
+  current = 1;
+  enter();
 };
 document.querySelector('#start-battle').onclick = () => ui.open('missions');
 document.querySelector('#camera-view').onclick = toggleView;
@@ -1204,6 +1337,13 @@ function releaseBattleAction(code) {
     melee.guard(false);
 }
 function dispatchAction(action) {
+  if (action === 'interact') {
+    clearInput();
+    if (hqTraining?.active) hqTraining.stop();
+    else hqController?.interact();
+    return;
+  }
+  if (hqController?.seated && !['view', 'reset'].includes(action)) return;
   if ((endedChallenge() || battle.phase === 'bailout') && !['reset', 'view'].includes(action)) return;
   if (action === 'jump') jumpQueued = true;
   if (action === 'sprint' && settings.sprintToggle) sprintLatched = !sprintLatched;
@@ -1248,6 +1388,11 @@ function dispatchAction(action) {
   }
 }
 window.addEventListener('keydown', (event) => {
+  if (hqController?.isOpen) return;
+  if (event.code === 'Escape' && hqController?.escape()) {
+    event.preventDefault();
+    return;
+  }
   if (event.code === 'F2' && !event.repeat) {
     event.preventDefault();
     if (ui.isOpen) ui.close();
@@ -1534,19 +1679,21 @@ renderer.setAnimationLoop((now) => {
   const elapsed = Math.min(clock.getDelta(), 0.25);
   if (paused) {
     if (renderRequested) {
-      renderer.render(scene, camera);
+      renderer.render(hqTraining?.active ? hqTraining.scene : scene, camera);
       renderRequested = false;
     }
     return;
   }
   if (exploring) {
-    const input = moveInput(),
+    const input = hqController?.seated ? {} : moveInput(),
       exhausted = combat.snapshot.state === 'exhausted';
     let remaining = elapsed;
     while (remaining > 1e-7) {
       const dt = Math.min(remaining, 1 / 120),
         from = { ...motor.position };
       if (endedChallenge()) break;
+      hqController?.update(dt, true, !!hqTraining?.active);
+      hqTraining?.update(dt);
       combat.update(dt);
       range.update(dt);
       melee.update(dt, { blade: !!bladeSide(), shield: activeTrigger('shield'), grounded: motor.grounded });
@@ -1571,7 +1718,7 @@ renderer.setAnimationLoop((now) => {
         movement.jump = false;
         movement.jumpPressed = false;
       }
-      motor.update(dt, movement, yaw);
+      if (!hqController?.seated) motor.update(dt, movement, yaw);
       if (combat.snapshot.state !== 'exhausted') grasshopper.checkStep(from, motor.position, input, yaw);
       input.jumpPressed = false;
       remaining -= dt;
@@ -1595,6 +1742,13 @@ renderer.setAnimationLoop((now) => {
     state.bladeSide = bladeSide();
     state.body = body.snapshot;
     state.bailout = battle.phase === 'bailout';
+    state.hqPose = hqController?.pose;
+    if (hqController?.seated) {
+      state.heading = motor.heading;
+      state.animation = 'idle';
+      state.speed = 0;
+      state.grounded = true;
+    }
     if (state.battleAction.phase !== 'idle') state.heading = yaw;
     if (state.aiming) state.heading = yaw;
     avatar.update(elapsed, state);
@@ -1627,7 +1781,7 @@ renderer.setAnimationLoop((now) => {
     gunEffects.update(
       elapsed,
       shooting.snapshot,
-      battle.phase === 'idle' ? range.targets : [],
+      !hqTraining?.active && battle.phase === 'idle' ? range.targets : [],
       { main: muzzleMain, sub: muzzleSub },
       true,
     );
@@ -1677,8 +1831,9 @@ renderer.setAnimationLoop((now) => {
     fpsTime = now;
     document.querySelector('#fps-display').textContent = `FPS ${fps}`;
   }
+  if (!exploring) hqController?.update(0, false);
   city.architecture.update(camera, settings.detailDistance);
-  renderer.render(scene, camera);
+  renderer.render(hqTraining?.active ? hqTraining.scene : scene, camera);
   renderRequested = false;
 });
 window.addEventListener('resize', () => {
@@ -1740,12 +1895,15 @@ window.__mikado = {
         headquartersCenter: [0, -150],
       },
       headquarters: {
+        ...hqController?.snapshot,
+        simulation: hqTraining?.snapshot,
         name: headquarters.name,
         enlargement: BASE.enlargement,
         openRoof: headquarters.openRoof,
         width: headquarters.width * baseScale,
         depth: headquarters.depth * baseScale,
-        height: headquarters.height * baseScale,
+        height: HQ.roof,
+        wallHeight: headquarters.height * baseScale,
         towers: headquarters.towers,
       },
     };

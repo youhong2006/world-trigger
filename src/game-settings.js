@@ -20,6 +20,7 @@ export const ACTIONS = {
   aim: '瞄準（按住）',
   menuEnter: '發射選單：進入下一層',
   menuBack: '發射選單：返回／關閉',
+  interact: '與物品互動／坐下／站起',
   swapSide: '切換射擊側',
   cycleTarget: '切換輔助目標',
   slot1: '主槽 1',
@@ -88,7 +89,8 @@ export const DEFAULTS = Object.freeze({
     aim: 'Mouse1',
     menuEnter: 'Mouse4',
     menuBack: 'Mouse3',
-    swapSide: 'KeyF',
+    interact: 'KeyF',
+    swapSide: 'KeyZ',
     cycleTarget: 'KeyT',
     slot1: 'Digit1',
     slot2: 'Digit2',
@@ -169,6 +171,12 @@ export function normalizeSettings(value = {}) {
   if (bindings.split === undefined && bindings.aim === 'Mouse2') {
     bindings.aim = 'Mouse1';
     bindings.split = 'Mouse2';
+  }
+  // Migrate the former default F side-swap; preserve deliberate custom layouts.
+  if (bindings.interact === undefined && bindings.swapSide === 'KeyF') {
+    bindings.interact = 'KeyF';
+    bindings.swapSide = 'KeyZ';
+    if (Object.entries(bindings).some(([a, c]) => a !== 'swapSide' && c === 'KeyZ')) delete bindings.swapSide;
   }
   const used = new Set();
   out.bindings = {};

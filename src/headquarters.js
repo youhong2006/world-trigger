@@ -1,12 +1,15 @@
 import * as THREE from 'three';
+import { fortressGeometry } from './hq-geometry.js';
+import { taperedVolume } from './hq-layout.js';
 import { BASE } from './city-layout.js';
 
 /** BORDER's open-roof perimeter fortress, based on the aerial reference. */
-export function createHeadquarters({ scene, box, cylinder }) {
+export function createHeadquarters({ scene, box, cylinder, solid }) {
   const center = { x: 23, z: -117 };
   const width = BASE.width;
   const depth = BASE.depth;
   const height = BASE.height;
+  const vertical = height / 54;
   const front = center.z + depth / 2;
   const right = center.x + width / 2;
   const left = center.x - width / 2;
@@ -77,25 +80,157 @@ export function createHeadquarters({ scene, box, cylinder }) {
   const outerFaces = [wallMaterial, wallMaterial, roofMaterial, wallMaterial, wallMaterial, wallMaterial];
   const walls = [
     { name: 'front', x: center.x, z: front - thickness / 2, w: width, d: thickness, innerFace: 5 },
-    { name: 'back', x: center.x, z: center.z - depth / 2 + thickness / 2, w: width, d: thickness, innerFace: 4 },
+    {
+      name: 'back',
+      x: center.x,
+      z: center.z - depth / 2 + thickness / 2,
+      w: width,
+      d: thickness,
+      innerFace: 4,
+    },
     { name: 'left', x: left + thickness / 2, z: center.z, w: thickness, d: innerDepth, innerFace: 0 },
     { name: 'right', x: right - thickness / 2, z: center.z, w: thickness, d: innerDepth, innerFace: 1 },
   ];
-  box(center.x, 0, center.z, width + 3, BASE.floorHeight, depth + 3, '#b0b8c7');
-  for (const wall of walls) {
-    const mesh = box(wall.x, BASE.floorHeight, wall.z, wall.w, height, wall.d, '#a3aec4', true);
-    mesh.name = `BORDER ${wall.name} perimeter wall`;
-    const faces = [...outerFaces];
-    faces[wall.innerFace] = interiorMaterial;
-    mesh.material = faces;
-  }
-  // Narrow walkways and pale parapets outline both edges of the open roof.
+  // The occupied wing cuts through the front wall; it is not a second building.
   const roofY = height + BASE.floorHeight;
-  for (const z of [front, center.z - depth / 2, front - thickness, center.z - depth / 2 + thickness]) {
-    box(center.x, roofY, z, width, 0.38, 0.24, '#c4cbdd');
+  const insetX = width * 0.04,
+    insetZ = depth * 0.04;
+  function slopeBox(x, y, z, w, h, d, tx = x, tz = z, tw = w, td = d, material = wallMaterial) {
+    const v = taperedVolume({ x, z, w, d, y, h, topX: tx, topZ: tz, topW: tw, topD: td });
+    const innerFace = d > w ? (x < center.x ? 3 : 5) : z > center.z ? 2 : 4;
+    const geometry = fortressGeometry(v, innerFace);
+    const mesh = new THREE.Mesh(geometry, [
+      material === interiorMaterial ? wallMaterial : material,
+      interiorMaterial,
+      roofMaterial,
+    ]);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+    solid?.(v);
+    return mesh;
   }
-  for (const x of [left, right, left + thickness, right - thickness]) {
-    box(x, roofY, center.z, 0.24, 0.38, depth, '#c4cbdd');
+  // Front left/right buttresses leave a 128m occupied/service wing in the middle.
+  const gap = 8;
+  for (const sign of [-1, 1]) {
+    const span = (width - gap) / 2,
+      x = center.x + sign * (gap / 2 + span / 2);
+    slopeBox(
+      x,
+      BASE.floorHeight,
+      front - thickness / 2,
+      span,
+      height,
+      thickness,
+      x - (sign * insetX) / 2,
+      front - thickness / 2 - insetZ,
+      span - insetX,
+      thickness,
+      wallMaterial,
+    );
+  }
+  for (const wall of walls.filter((w) => w.name !== 'front')) {
+    const dx = wall.name === 'left' ? insetX : wall.name === 'right' ? -insetX : 0;
+    const dz = wall.name === 'back' ? insetZ : 0;
+    slopeBox(
+      wall.x,
+      BASE.floorHeight,
+      wall.z,
+      wall.w,
+      height,
+      wall.d,
+      wall.x + dx,
+      wall.z + dz,
+      wall.name === 'back' ? wall.w - insetX * 2 : wall.w,
+      wall.name === 'back' ? wall.d : wall.d - insetZ * 2,
+      interiorMaterial,
+    );
+  }
+  // Thin sloped skins enclose the tall service void without filling its stairs/lift.
+  const gapX = center.x;
+  slopeBox(
+    gapX,
+    BASE.floorHeight,
+    front - thickness + 0.06,
+    gap,
+    height,
+    0.12,
+    gapX,
+    front - thickness + 0.06 - insetZ,
+    gap,
+    0.12,
+    interiorMaterial,
+  );
+  // Front skin has a real, human-size entry opening at the foot of the fortress.
+  for (const sign of [-1, 1])
+    slopeBox(
+      gapX + sign * 2.05,
+      BASE.floorHeight,
+      front - 0.06,
+      3.9,
+      height,
+      0.12,
+      gapX + sign * 2.05,
+      front - 0.06 - insetZ,
+      3.9,
+      0.12,
+    );
+  const entryTop = (BASE.floorHeight * BASE.scale + 3.2) / BASE.scale;
+  slopeBox(
+    gapX,
+    entryTop,
+    front - 0.06 - ((entryTop - BASE.floorHeight) / height) * insetZ,
+    0.2,
+    roofY - entryTop,
+    0.12,
+    gapX,
+    front - 0.06 - insetZ,
+    0.2,
+    0.12,
+  );
+  // Excavated slab under the occupied wing. Remaining courtyard slab stays at the old elevation.
+  box(center.x, 0, center.z - 2.875, width + 3, BASE.floorHeight, depth - 2.75, '#b0b8c7');
+  for (const sign of [-1, 1])
+    box(
+      center.x + sign * ((width + 3) / 4 + 2),
+      0,
+      front + 1.0625,
+      (width + 3) / 2 - 4,
+      BASE.floorHeight,
+      5.75,
+      '#b0b8c7',
+    );
+  // Roof ring follows the tapered footprint. Parapets are real colliders.
+  for (const z of [
+    front - insetZ,
+    center.z - depth / 2 + insetZ,
+    front - thickness - insetZ,
+    center.z - depth / 2 + thickness + insetZ,
+  ]) {
+    box(center.x, roofY, z, width - insetX * 2, 0.09, 0.08, '#c4cbdd', true);
+  }
+  for (const x of [left + insetX, right - insetX, left + thickness + insetX, right - thickness - insetX]) {
+    box(x, roofY, center.z, 0.08, 0.09, depth - insetZ * 2, '#c4cbdd', true);
+  }
+  for (const wall of walls) {
+    const tx = wall.name === 'left' ? wall.x + insetX : wall.name === 'right' ? wall.x - insetX : wall.x;
+    const tz = wall.name === 'front' ? wall.z - insetZ : wall.name === 'back' ? wall.z + insetZ : wall.z;
+    if (wall.name === 'front') {
+      const total = width - insetX * 2,
+        span = (total - 8) / 2;
+      for (const side of [-1, 1])
+        box(center.x + side * (4 + span / 2), roofY - 0.04, tz, span, 0.04, thickness, '#69768e', true);
+    } else
+      box(
+        tx,
+        roofY - 0.04,
+        tz,
+        wall.name === 'back' ? width - insetX * 2 : thickness,
+        0.04,
+        wall.name === 'back' ? thickness : innerDepth - insetZ * 2,
+        '#69768e',
+        true,
+      );
   }
   const floorCanvas = document.createElement('canvas');
   floorCanvas.width = floorCanvas.height = 512;
@@ -105,8 +240,14 @@ export function createHeadquarters({ scene, box, cylinder }) {
   floorPaint.strokeStyle = '#8e9db2';
   floorPaint.lineWidth = 2;
   for (let i = 0; i <= 16; i++) {
-    floorPaint.beginPath();floorPaint.moveTo(i * 32, 0);floorPaint.lineTo(i * 32, 512);floorPaint.stroke();
-    floorPaint.beginPath();floorPaint.moveTo(0, i * 32);floorPaint.lineTo(512, i * 32);floorPaint.stroke();
+    floorPaint.beginPath();
+    floorPaint.moveTo(i * 32, 0);
+    floorPaint.lineTo(i * 32, 512);
+    floorPaint.stroke();
+    floorPaint.beginPath();
+    floorPaint.moveTo(0, i * 32);
+    floorPaint.lineTo(512, i * 32);
+    floorPaint.stroke();
   }
   const floorTexture = new THREE.CanvasTexture(floorCanvas);
   floorTexture.colorSpace = THREE.SRGBColorSpace;
@@ -122,20 +263,24 @@ export function createHeadquarters({ scene, box, cylinder }) {
   }
 
   function tower(x, z, w = 10, h = 14) {
-    const bottom = 46;
-    box(x, bottom, z, w, h, 9, '#939fb9');
+    const bottom = 46 * vertical;
+    h *= vertical;
+    w *= 0.35;
+    x += x < center.x ? insetX : -insetX;
+    z += z < center.z ? insetZ : -insetZ;
+    box(x, bottom, z, w, h, 3, '#939fb9', true);
     // Recessed tower rooftop with a raised rim, visible from the new aerial angle.
-    box(x, bottom + h, z, w, 0.05, 9, '#58667f');
-    for (const dz of [-4.5, 4.5]) box(x, bottom + h, z + dz, w + 0.25, 0.6, 0.25, '#c0c7da');
-    for (const dx of [-w / 2, w / 2]) box(x + dx, bottom + h, z, 0.25, 0.6, 9, '#c0c7da');
+    box(x, bottom + h, z, w, 0.05, 3, '#58667f');
+    for (const dz of [-1.5, 1.5]) box(x, bottom + h, z + dz, w + 0.25, 0.6, 0.25, '#c0c7da');
+    for (const dx of [-w / 2, w / 2]) box(x + dx, bottom + h, z, 0.25, 0.6, 3, '#c0c7da');
 
     // Curved, hanging buttress: a distinctive feature beneath the watchtowers.
     const shape = new THREE.Shape();
     shape.moveTo(-w * 0.45, 0);
     shape.lineTo(w * 0.45, 0);
-    shape.quadraticCurveTo(w * 0.14, -3, w * 0.14, -11);
-    shape.quadraticCurveTo(0, -16, -w * 0.14, -11);
-    shape.quadraticCurveTo(-w * 0.14, -3, -w * 0.45, 0);
+    shape.quadraticCurveTo(w * 0.14, -3 * vertical, w * 0.14, -11 * vertical);
+    shape.quadraticCurveTo(0, -16 * vertical, -w * 0.14, -11 * vertical);
+    shape.quadraticCurveTo(-w * 0.14, -3 * vertical, -w * 0.45, 0);
     const bracket = new THREE.Mesh(
       new THREE.ExtrudeGeometry(shape, { depth: 4, bevelEnabled: false, curveSegments: 12 }),
       new THREE.MeshStandardMaterial({ color: '#8b98b2', roughness: 0.95 }),
@@ -159,17 +304,20 @@ export function createHeadquarters({ scene, box, cylinder }) {
   tower(left, center.z - depth / 2);
   tower(right, center.z - depth / 2, 10, 12);
 
+  const controlBox = (x, y, z, w, h, d, c) =>
+    box(x, y * vertical + BASE.floorHeight, z - 1.2, w, h * vertical, d * 0.45, c, true);
+  const controlAntenna = (x, y, z, h) => antenna(x, y * vertical + BASE.floorHeight, z - 1.2, h * vertical);
   // Wider control block suspended high on the otherwise windowless front wall.
-  box(0, 40, front + 1.4, 14, 19, 7, '#9aa7c0');
-  box(0, 59, front + 1.4, 14.3, 0.35, 7.3, '#b6c0d0');
-  box(0, 38.8, front + 0.4, 12, 1.2, 4, '#8291a8');
+  controlBox(0, 40, front + 1.4, 14, 19, 7, '#9aa7c0');
+  controlBox(0, 59, front + 1.4, 14.3, 0.35, 7.3, '#b6c0d0');
+  controlBox(0, 38.8, front + 0.4, 12, 1.2, 4, '#8291a8');
   for (let row = 0; row < 6; row++) {
     for (let col = 0; col < 7; col++) {
-      box(-5.4 + col * 1.8, 41.5 + row * 2.55, front + 4.94, 0.48, 0.85, 0.06, '#465875');
+      controlBox(-5.4 + col * 1.8, 41.5 + row * 2.55, front + 4.94, 0.48, 0.85, 0.06, '#465875');
     }
   }
-  antenna(-4, 59.35, front + 1.4, 5.5);
-  antenna(4, 59.35, front + 1.4, 3.6);
+  controlAntenna(-4, 59.35, front + 1.4, 5.5);
+  controlAntenna(4, 59.35, front + 1.4, 3.6);
 
   // Flat emblem painted onto the concrete, with no rectangular sign backing.
   const emblem = document.createElement('canvas');
@@ -208,37 +356,37 @@ export function createHeadquarters({ scene, box, cylinder }) {
   emblemTexture.colorSpace = THREE.SRGBColorSpace;
   emblemTexture.anisotropy = 4;
   const emblemMaterial = new THREE.MeshStandardMaterial({
-    map: emblemTexture, transparent: true, roughness: 1,
-    depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1,
+    map: emblemTexture,
+    transparent: true,
+    roughness: 1,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
   });
-  const frontEmblem = new THREE.Mesh(new THREE.PlaneGeometry(23, 28), emblemMaterial);
-  frontEmblem.position.set(36, 25, front + 0.025);
+  const frontEmblem = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), emblemMaterial);
+  frontEmblem.position.set(36, 6, front + 0.025 - ((6 - BASE.floorHeight) / height) * insetZ);
+  frontEmblem.rotation.x = -Math.atan(insetZ / height);
   scene.add(frontEmblem);
-  const sideEmblem = new THREE.Mesh(new THREE.PlaneGeometry(23, 28), emblemMaterial);
+  const sideEmblem = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), emblemMaterial);
   sideEmblem.rotation.y = Math.PI / 2;
-  sideEmblem.position.set(right + 0.025, 25, -112);
+  sideEmblem.position.set(right + 0.025 - ((6 - BASE.floorHeight) / height) * insetX, 6, -112);
+  sideEmblem.rotation.z = Math.atan(insetX / height);
   scene.add(sideEmblem);
 
-  // Human-scale annex at the foot of the keep, as in the reference image.
-  box(42, 0, front + 3.5, 26, 10.2, 5.8, '#c7cdd0', true);
-  for (let floor = 0; floor < 3; floor++) {
-    box(42, 0.5 + floor * 3.2, front + 6.5, 26, 0.2, 0.2, '#929fab');
-    for (let column = 0; column < 8; column++) {
-      box(31 + column * 3.15, 1.1 + floor * 3.2, front + 6.44, 1.7, 1.65, 0.08, '#53778b');
-    }
-  }
-  box(42, 10.2, front + 3.5, 26.5, 0.5, 6.3, '#8998aa');
-  box(42, 0.1, front + 6.53, 3, 2.7, 0.12, '#425a71');
-  box(42, 2.85, front + 7, 5, 0.25, 1.2, '#8998aa');
-  cylinder(48, 10.7, front + 3, 0.7, 1.7, '#8c9aa9');
-  antenna(33, 10.7, front + 2.5, 3);
+  // Lower exterior utility annex. Its interior is outside the occupied-wing scope.
+  box(42, 0, front + 3.5, 26, 0.64, 5.8, '#c7cdd0', true);
+  for (let row = 0; row < 2; row++)
+    for (let col = 0; col < 18; col++)
+      box(30 + col * 1.35, 0.12 + row * 0.25, front + 6.44, 0.8, 0.13, 0.03, '#53778b');
 
   return {
-    name: 'BORDER open-courtyard fortress',
+    name: 'BORDER tapered explorable fortress',
     openRoof: true,
     courtyard: { width: innerWidth, depth: innerDepth },
     wallCount: walls.length,
-    width, depth, height,
+    width,
+    depth,
+    height,
     towers: 4,
     emblems: 2,
     previewPosition: new THREE.Vector3(100, 43, -7),

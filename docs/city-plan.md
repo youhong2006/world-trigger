@@ -2,6 +2,8 @@
 
 依據使用者提供的兩張原作城市遠景圖，先建立空間關係與整體比例，再逐區加入後續參考細節。
 
+新增的基地室內、全部住宅可進入與 F 鍵互動需求，見 [地圖細化調整紀錄](map-adjustment-log.md)。該批需求目前只記錄與討論，尚未實作，等待使用者另外下達實作命令。
+
 ## 從參考圖建立的配置
 
 - BORDER 是城市中央的巨型地標，外圍有明顯清空的土色腹地。
@@ -95,3 +97,6 @@ node --test src/city-layout.test.js src/building-metrics.test.js
 ```sh
 node --test src/*.test.js
 ```
+
+
+2026-10-23 基地探索初版已實作：主屋頂改為 350 m，1,248 × 800 m 占地保留，南側主設施翼可進入，B2–6F 及 RF 有樓梯／電梯銜接。住宅室內不在本次範圍；見 [基地實作紀錄](border-headquarters/implementation.md)。

@@ -7,7 +7,7 @@ export const BASE = {
   z: -150,
   width: 78,
   depth: 50,
-  height: 54,
+  height: (350 - 1.1 * 16) / 16, // Main roof is 350 m above the city datum; crowns/antennae are additional.
   wallThickness: 4.2,
   floorHeight: 1.1,
 };
@@ -35,13 +35,20 @@ export const CITY = {
 };
 
 export const STREETS = {
-  arterialWidth: 12, localWidth: 6, laneWidth: 5,
-  sidewalk: 1.25, sharedEdge: .45,
-  frontDepth: 3.8, sideGap: 2.4, rearGap: 2.4,
+  arterialWidth: 12,
+  localWidth: 6,
+  laneWidth: 5,
+  sidewalk: 1.25,
+  sharedEdge: 0.45,
+  frontDepth: 3.8,
+  sideGap: 2.4,
+  rearGap: 2.4,
 };
-export const streetWidth = line => Math.abs(line % 1008) < .01 ? STREETS.arterialWidth : STREETS.localWidth;
-export const streetEdgeWidth = width => width >= 10 ? STREETS.sidewalk : STREETS.sharedEdge;
-export const streetElevation = width => width >= 14 ? .23 : width >= 10 ? .21 : width >= 6 ? .19 : .17;
+export const streetWidth = (line) =>
+  Math.abs(line % 1008) < 0.01 ? STREETS.arterialWidth : STREETS.localWidth;
+export const streetEdgeWidth = (width) => (width >= 10 ? STREETS.sidewalk : STREETS.sharedEdge);
+export const streetElevation = (width) =>
+  width >= 14 ? 0.23 : width >= 10 ? 0.21 : width >= 6 ? 0.19 : 0.17;
 
 const smooth = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -51,7 +58,8 @@ const smooth = (a, b, x) => {
 // A continuous asymmetric basin, rather than a rectangular cutoff.
 export function basinRadius(x, z) {
   const angle = Math.atan2(z / CITY.basinZ, x / CITY.basinX);
-  const edge = 1 + 0.075 * Math.sin(angle * 3 + 0.6) + 0.045 * Math.sin(angle * 5 - 0.9) + 0.025 * Math.cos(angle * 8);
+  const edge =
+    1 + 0.075 * Math.sin(angle * 3 + 0.6) + 0.045 * Math.sin(angle * 5 - 0.9) + 0.025 * Math.cos(angle * 8);
   return Math.hypot(x / CITY.basinX, z / CITY.basinZ) / edge;
 }
 
@@ -70,7 +78,8 @@ export function foothillHeight(x, z) {
   const r = basinRadius(x, z);
   const angle = Math.atan2(z, x);
   const foothills = 62 * smooth(0.57, 1.05, r);
-  const foothillVariation = 0.5 + 0.25 * Math.sin(x / 240 + 0.6) * Math.cos(z / 310) + 0.17 * Math.sin((x + z) / 410);
+  const foothillVariation =
+    0.5 + 0.25 * Math.sin(x / 240 + 0.6) * Math.cos(z / 310) + 0.17 * Math.sin((x + z) / 410);
   const mountainRise = smooth(0.93, 1.36, r);
   const distantFall = 1 - smooth(2.0, 3.9, r) * 0.3;
   const ridge = 420 + 240 * Math.sin(angle * 5 + 0.8) ** 2 + 180 * Math.cos(angle * 9 - 0.4) ** 2;
@@ -94,7 +103,7 @@ export function ringDistance(x, z) {
 }
 
 export function forestAt(x, z, margin = 0) {
-  return CITY.forests.find(f => {
+  return CITY.forests.find((f) => {
     const radius = ((x - f.x) / (f.rx + margin)) ** 2 + ((z - f.z) / (f.rz + margin)) ** 2;
     return radius < 1 + 0.12 * Math.sin(x / 70) * Math.cos(z / 85);
   });
@@ -105,29 +114,36 @@ export function inRiver(x, z, margin = 0) {
 }
 
 export function onBridge(x) {
-  return CITY.bridges.some(b => Math.abs(x - b) < 9);
+  return CITY.bridges.some((b) => Math.abs(x - b) < 9);
 }
 
 export function streetPosition(x, z) {
   const outer = smooth(850, 2700, Math.hypot(x, z));
   return {
-    x: x + outer * 58 * Math.sin(z / 340) * Math.sin(Math.PI * x / 1008) ** 2,
-    z: z + outer * 48 * Math.sin(x / 320) * Math.sin(Math.PI * z / 1008) ** 2,
+    x: x + outer * 58 * Math.sin(z / 340) * Math.sin((Math.PI * x) / 1008) ** 2,
+    z: z + outer * 48 * Math.sin(x / 320) * Math.sin((Math.PI * z) / 1008) ** 2,
   };
 }
 
 export function unwarpStreet(x, z) {
-  let rawX = x, rawZ = z;
+  let rawX = x,
+    rawZ = z;
   for (let i = 0; i < 6; i++) {
     const warped = streetPosition(rawX, rawZ);
-    rawX += x - warped.x;rawZ += z - warped.z;
+    rawX += x - warped.x;
+    rawZ += z - warped.z;
   }
   return { x: rawX, z: rawZ };
 }
 
 export function streetAllowed(x, z) {
-  return basinRadius(x, z) < 1.04 && terrainHeight(x, z) < 39
-    && !inCampus(x, z, 8) && !inRiver(x, z, 16) && !forestAt(x, z, -40);
+  return (
+    basinRadius(x, z) < 1.04 &&
+    terrainHeight(x, z) < 39 &&
+    !inCampus(x, z, 8) &&
+    !inRiver(x, z, 16) &&
+    !forestAt(x, z, -40)
+  );
 }
 
 export function streetClearance(x, z) {
@@ -139,12 +155,14 @@ export function streetClearance(x, z) {
     clearance = Math.min(clearance, Math.abs(value - grid) - width / 2 - streetEdgeWidth(width));
   }
   // One through lane per block: residential rows face it on both sides.
-  const lane = CITY.blockSize / 2 + Math.round((raw.z - CITY.blockSize / 2) / CITY.blockSize) * CITY.blockSize;
+  const lane =
+    CITY.blockSize / 2 + Math.round((raw.z - CITY.blockSize / 2) / CITY.blockSize) * CITY.blockSize;
   return Math.min(clearance, Math.abs(raw.z - lane) - STREETS.laneWidth / 2 - STREETS.sharedEdge);
 }
 
 export function lookoutTerrainHeight(x, z) {
-  const dx = x - CITY.lookout.x, dz = z - CITY.lookout.z;
+  const dx = x - CITY.lookout.x,
+    dz = z - CITY.lookout.z;
   const crest = Math.max(0, 1 - (dx / CITY.lookout.rx) ** 2 - (dz / CITY.lookout.rz) ** 2);
   return 44 * crest * crest;
 }
@@ -161,16 +179,18 @@ export function pavedSurfaceOffset(x, z) {
   let offset = 0;
   for (const value of [rawX, rawZ]) {
     const gridLine = Math.round(value / CITY.blockSize) * CITY.blockSize;
-    const width = streetWidth(gridLine), halfWidth = width / 2;
+    const width = streetWidth(gridLine),
+      halfWidth = width / 2;
     const distance = Math.abs(value - gridLine);
     if (distance < halfWidth) offset = Math.max(offset, streetElevation(width));
-    else if (distance < halfWidth + streetEdgeWidth(width)) offset = Math.max(offset, .10);
+    else if (distance < halfWidth + streetEdgeWidth(width)) offset = Math.max(offset, 0.1);
   }
   const blockX = 72 + Math.round((rawX - 72) / 144) * 144;
   const blockZ = 72 + Math.round((rawZ - 72) / 144) * 144;
-  if (settlementDensity(blockX, blockZ) > .12 && ringDistance(x, z) > 15) {
-    if (Math.abs(rawZ - blockZ) < STREETS.laneWidth / 2) return Math.max(offset, streetElevation(STREETS.laneWidth));
-    if (Math.abs(rawZ - blockZ) < STREETS.laneWidth / 2 + STREETS.sharedEdge) offset = Math.max(offset, .10);
+  if (settlementDensity(blockX, blockZ) > 0.12 && ringDistance(x, z) > 15) {
+    if (Math.abs(rawZ - blockZ) < STREETS.laneWidth / 2)
+      return Math.max(offset, streetElevation(STREETS.laneWidth));
+    if (Math.abs(rawZ - blockZ) < STREETS.laneWidth / 2 + STREETS.sharedEdge) offset = Math.max(offset, 0.1);
   }
   return offset;
 }
@@ -178,21 +198,35 @@ export function pavedSurfaceOffset(x, z) {
 export function groundHeight(x, z) {
   const bridge = bridgeSurfaceHeight(x, z);
   if (bridge !== null) return bridge;
-  if (Math.abs(x - BASE.x) < BASE.width * BASE.scale / 2 + 1.5 * BASE.scale
-      && Math.abs(z - BASE.z) < BASE.depth * BASE.scale / 2 + 1.5 * BASE.scale) return BASE.floorHeight * BASE.scale;
+  if (Math.abs(x) < 5 && z >= 251 && z < 310) {
+    const t = (310 - z) / 59;
+    return terrainHeight(x, 310) * (1 - t) + BASE.floorHeight * BASE.scale * t;
+  }
+  if (Math.abs(x) < 64 && z > 182 && z < 251) return BASE.floorHeight * BASE.scale - 8;
+  if (
+    Math.abs(x - BASE.x) < (BASE.width * BASE.scale) / 2 + 1.5 * BASE.scale &&
+    Math.abs(z - BASE.z) < (BASE.depth * BASE.scale) / 2 + 1.5 * BASE.scale
+  )
+    return BASE.floorHeight * BASE.scale;
+  // Excavated occupied wing: actual slabs/stairs determine support, including B2/B1.
+  // This matches the cut-out in headquarters.js; no terrain plane through basement rooms.
+  // (Checked before the base's exterior platform below.)
   // Count paved surfaces and the lookout platform when setting the person's eye height.
   const lookout = CITY.lookout;
-  if (Math.abs(x - lookout.x) < 12.5 && Math.abs(z - lookout.z) < 7) return terrainHeight(lookout.x, lookout.z) + .25;
+  if (Math.abs(x - lookout.x) < 12.5 && Math.abs(z - lookout.z) < 7)
+    return terrainHeight(lookout.x, lookout.z) + 0.25;
   return terrainHeight(x, z) + pavedSurfaceOffset(x, z);
 }
 
 export function bridgeSurfaceHeight(x, z) {
-  const bridge = CITY.bridges.find(center => Math.abs(x - center) <= 10.05);
+  const bridge = CITY.bridges.find((center) => Math.abs(x - center) <= 10.05);
   if (bridge === undefined) return null;
-  const distance = Math.abs(z - riverZ(bridge)), half = CITY.bridgeLength / 2, rampLength = 14;
+  const distance = Math.abs(z - riverZ(bridge)),
+    half = CITY.bridgeLength / 2,
+    rampLength = 14;
   if (distance > half + rampLength) return null;
   const offset = Math.abs(x - bridge);
-  const deck = offset >= 7 && offset <= 9.05 ? .79 : .65;
+  const deck = offset >= 7 && offset <= 9.05 ? 0.79 : 0.65;
   const t = Math.max(0, Math.min(1, (half + rampLength - distance) / rampLength));
   const approach = terrainHeight(x, z) + streetElevation(STREETS.arterialWidth);
   return approach + (deck - approach) * t;
@@ -200,30 +234,88 @@ export function bridgeSurfaceHeight(x, z) {
 
 // Spatial bins keep walking checks independent of the total building count.
 export function createCollisionIndex() {
-  const bins = new Map();
+  const bins = new Map(),
+    heightBins = new Map(),
+    tallBins = new Map();
+  const heightCell = 6;
   const cellSize = 48;
   let count = 0;
-  function add({ x, z, w, d, y = -Infinity, h = Infinity, roof = null }) {
-    const bounds = { x, z, halfW: w / 2, halfD: d / 2, w: w / 2 + .6, d: d / 2 + .6, bottom: y, top: Number.isFinite(h) ? y + h : Infinity, roof };
+  function add({
+    x,
+    z,
+    w,
+    d,
+    y = -Infinity,
+    h = Infinity,
+    roof = null,
+    planes = null,
+    enabled = true,
+    traceOnly = false,
+  }) {
+    const bounds = {
+      x,
+      z,
+      halfW: w / 2,
+      halfD: d / 2,
+      w: w / 2 + 0.6,
+      d: d / 2 + 0.6,
+      bottom: y,
+      top: Number.isFinite(h) ? y + h : Infinity,
+      roof,
+      planes,
+      enabled,
+      traceOnly,
+      keys: [],
+      dynamic: !Number.isFinite(y) || !Number.isFinite(h) || h > 32,
+    };
     for (let gx = Math.floor((x - bounds.w) / cellSize); gx <= Math.floor((x + bounds.w) / cellSize); gx++) {
-      for (let gz = Math.floor((z - bounds.d) / cellSize); gz <= Math.floor((z + bounds.d) / cellSize); gz++) {
+      for (
+        let gz = Math.floor((z - bounds.d) / cellSize);
+        gz <= Math.floor((z + bounds.d) / cellSize);
+        gz++
+      ) {
         const key = `${gx},${gz}`;
         if (!bins.has(key)) bins.set(key, []);
         bins.get(key).push(bounds);
+        bounds.keys.push(key);
+        if (bounds.dynamic) {
+          if (!tallBins.has(key)) tallBins.set(key, []);
+          tallBins.get(key).push(bounds);
+        } else
+          for (let gy = Math.floor(y / heightCell); gy <= Math.floor((y + h) / heightCell); gy++) {
+            const hk = key + ',' + gy;
+            if (!heightBins.has(hk)) heightBins.set(hk, []);
+            heightBins.get(hk).push(bounds);
+          }
       }
     }
     count++;
+    return bounds;
   }
+  // Moving doors remain inside their original broad-phase bounds; elevator moves vertically.
+  function setHeight(bounds, y, h) {
+    if (!bounds.dynamic) {
+      bounds.dynamic = true;
+      for (const key of bounds.keys) {
+        if (!tallBins.has(key)) tallBins.set(key, []);
+        tallBins.get(key).push(bounds);
+      }
+    }
+    bounds.bottom = y;
+    bounds.top = y + h;
+  }
+
   function hasObstacle(x, z) {
     const nearby = bins.get(`${Math.floor(x / cellSize)},${Math.floor(z / cellSize)}`) ?? [];
-    return nearby.some(b => Math.abs(x - b.x) < b.w && Math.abs(z - b.z) < b.d);
+    return nearby.some((b) => b.enabled && Math.abs(x - b.x) < b.w && Math.abs(z - b.z) < b.d);
   }
   function overlapsBox(x, z, w, d) {
-    const halfW = w / 2, halfD = d / 2;
+    const halfW = w / 2,
+      halfD = d / 2;
     for (let gx = Math.floor((x - halfW) / cellSize); gx <= Math.floor((x + halfW) / cellSize); gx++) {
       for (let gz = Math.floor((z - halfD) / cellSize); gz <= Math.floor((z + halfD) / cellSize); gz++) {
         for (const b of bins.get(`${gx},${gz}`) ?? []) {
-          if (Math.abs(x - b.x) < halfW + b.w && Math.abs(z - b.z) < halfD + b.d) return true;
+          if (b.enabled && Math.abs(x - b.x) < halfW + b.w && Math.abs(z - b.z) < halfD + b.d) return true;
         }
       }
     }
@@ -234,54 +326,127 @@ export function createCollisionIndex() {
     return hasObstacle(x, z);
   }
   function outsideWalkableWorld(x, z) {
-    return basinRadius(x, z) > CITY.walkRadius || (inRiver(x, z, .7) && !onBridge(x));
+    return basinRadius(x, z) > CITY.walkRadius || (inRiver(x, z, 0.7) && !onBridge(x));
   }
-  function nearby(minX, minZ, maxX, maxZ) {
+  function nearby(minX, minZ, maxX, maxZ, minY = -Infinity, maxY = Infinity) {
     const found = new Set();
     for (let gx = Math.floor(minX / cellSize); gx <= Math.floor(maxX / cellSize); gx++) {
       for (let gz = Math.floor(minZ / cellSize); gz <= Math.floor(maxZ / cellSize); gz++) {
-        for (const bounds of bins.get(`${gx},${gz}`) ?? []) found.add(bounds);
+        const key = `${gx},${gz}`;
+        if (!Number.isFinite(minY) || !Number.isFinite(maxY) || maxY - minY > 256) {
+          for (const b of bins.get(key) ?? []) found.add(b);
+        } else {
+          for (const b of tallBins.get(key) ?? []) found.add(b);
+          for (let gy = Math.floor(minY / heightCell); gy <= Math.floor(maxY / heightCell); gy++)
+            for (const b of heightBins.get(key + ',' + gy) ?? []) found.add(b);
+        }
       }
     }
     return found;
   }
-  function topAt(b,x,z,radius=0) {
-    if(!b.roof) return b.top;
-    const roof=b.roof, cos=Math.cos(roof.rotation), sin=Math.sin(roof.rotation);
-    const lx=Math.max(0,Math.abs((x-b.x)*cos-(z-b.z)*sin)-radius);
-    const lz=Math.max(0,Math.abs((x-b.x)*sin+(z-b.z)*cos)-radius);
-    let ratio=Math.max(0,1-lx/(roof.w/2));
-    if(roof.kind==='hip') ratio=Math.min(ratio,Math.max(0,(roof.d/2-lz)/(roof.d*.28)));
-    return roof.bottom+roof.height*ratio;
+  function topAt(b, x, z, radius = 0) {
+    if (b.planes) {
+      let top = b.top;
+      for (const [nx, ny, nz, c] of b.planes)
+        if (ny > 1e-9) top = Math.min(top, (c - nx * x - nz * z + radius * Math.hypot(nx, nz)) / ny);
+      return top;
+    }
+    if (!b.roof) return b.top;
+    const roof = b.roof,
+      cos = Math.cos(roof.rotation),
+      sin = Math.sin(roof.rotation);
+    const lx = Math.max(0, Math.abs((x - b.x) * cos - (z - b.z) * sin) - radius);
+    const lz = Math.max(0, Math.abs((x - b.x) * sin + (z - b.z) * cos) - radius);
+    let ratio = Math.max(0, 1 - lx / (roof.w / 2));
+    if (roof.kind === 'hip') ratio = Math.min(ratio, Math.max(0, (roof.d / 2 - lz) / (roof.d * 0.28)));
+    return roof.bottom + roof.height * ratio;
   }
-  function blockedAt(x, z, feetY, height, radius = .28) {
-    if (basinRadius(x,z)>CITY.walkRadius || (inRiver(x,z,.7) && !onBridge(x) && feetY<2)) return true;
-    for (const b of nearby(x - radius, z - radius, x + radius, z + radius)) {
-      if (feetY < topAt(b,x,z,radius) - .015 && feetY + height > b.bottom + .015
-          && Math.abs(x - b.x) < b.halfW + radius && Math.abs(z - b.z) < b.halfD + radius) return true;
+  function blockedAt(x, z, feetY, height, radius = 0.28) {
+    if (basinRadius(x, z) > CITY.walkRadius || (inRiver(x, z, 0.7) && !onBridge(x) && feetY < 2)) return true;
+    for (const b of nearby(x - radius, z - radius, x + radius, z + radius, feetY, feetY + height)) {
+      if (!b.enabled || b.traceOnly || feetY >= b.top - 0.015 || feetY + height <= b.bottom + 0.015) continue;
+      if (b.planes) {
+        let low = feetY + 0.015,
+          high = feetY + height - 0.015;
+        for (const [nx, ny, nz, c] of b.planes) {
+          const cap = c - nx * x - nz * z + radius * Math.hypot(nx, nz);
+          if (Math.abs(ny) < 1e-9) {
+            if (cap < 0) {
+              low = 1;
+              high = 0;
+              break;
+            }
+          } else if (ny > 0) high = Math.min(high, cap / ny);
+          else low = Math.max(low, cap / ny);
+        }
+        if (low > high) continue;
+      }
+      if (
+        feetY < topAt(b, x, z, radius) - 0.015 &&
+        feetY + height > b.bottom + 0.015 &&
+        Math.abs(x - b.x) < b.halfW + radius &&
+        Math.abs(z - b.z) < b.halfD + radius
+      )
+        return true;
     }
     return false;
   }
-  function canOccupy(x, z, feetY, height, radius = .28) {
+  function canOccupy(x, z, feetY, height, radius = 0.28) {
     return !blockedAt(x, z, feetY, height, radius);
   }
-  function surfaceHeightAt(x, z, feetY, maxStep = .38) {
+  function surfaceHeightAt(x, z, feetY, maxStep = 0.38) {
     let surface = groundHeight(x, z);
-    const supportRadius = .28;
-    for (const b of nearby(x - supportRadius, z - supportRadius, x + supportRadius, z + supportRadius)) {
-      const top=topAt(b,x,z,supportRadius);
-      if (Number.isFinite(top) && top <= feetY + maxStep + .015 && top > surface
-          && Math.abs(x - b.x) <= b.halfW + supportRadius && Math.abs(z - b.z) <= b.halfD + supportRadius) surface = top;
+    const supportRadius = 0.28;
+    // Descend six-metre buckets and stop once a supporting surface has been found.
+    // Hundreds of stacked stair flights therefore cost the same as a normal room.
+    const start = Math.floor((feetY + maxStep + 0.015) / heightCell),
+      end = Math.floor(surface / heightCell);
+    for (let gy = start; gy >= end; gy--) {
+      for (const b of nearby(
+        x - supportRadius,
+        z - supportRadius,
+        x + supportRadius,
+        z + supportRadius,
+        gy * heightCell,
+        (gy + 1) * heightCell - 0.001,
+      )) {
+        if (!b.enabled || b.traceOnly || b.bottom > feetY + maxStep + 0.015) continue;
+        const top = topAt(b, x, z, supportRadius);
+        if (
+          b.planes &&
+          b.planes.some(
+            ([nx, ny, nz, c]) => nx * x + ny * top + nz * z > c + supportRadius * Math.hypot(nx, nz) + 0.02,
+          )
+        )
+          continue;
+        if (
+          Number.isFinite(top) &&
+          top <= feetY + maxStep + 0.015 &&
+          top > surface &&
+          Math.abs(x - b.x) <= b.halfW + supportRadius &&
+          Math.abs(z - b.z) <= b.halfD + supportRadius
+        )
+          surface = top;
+      }
+      if (surface >= gy * heightCell) break;
     }
     return surface;
   }
   // Camera sphere sweep against height-aware solids. Water and city bounds
   // constrain the player, while the camera can look across them freely.
-  function segmentFraction(from, to, radius = .24) {
+  function segmentFraction(from, to, radius = 0.24, ignored = null) {
     let nearest = 1;
-    for (const b of nearby(Math.min(from.x, to.x) - radius, Math.min(from.z, to.z) - radius,
-      Math.max(from.x, to.x) + radius, Math.max(from.z, to.z) + radius)) {
-      let enter = 0, leave = nearest;
+    for (const b of nearby(
+      Math.min(from.x, to.x) - radius,
+      Math.min(from.z, to.z) - radius,
+      Math.max(from.x, to.x) + radius,
+      Math.max(from.z, to.z) + radius,
+      Math.min(from.y, to.y) - radius,
+      Math.max(from.y, to.y) + radius,
+    )) {
+      if (!b.enabled || ignored?.includes(b)) continue;
+      let enter = 0,
+        leave = nearest;
       const ranges = [
         ['x', b.x - b.halfW - radius, b.x + b.halfW + radius],
         ['y', b.bottom - radius, b.top + radius],
@@ -290,34 +455,66 @@ export function createCollisionIndex() {
       for (const [axis, min, max] of ranges) {
         const direction = to[axis] - from[axis];
         if (Math.abs(direction) < 1e-9) {
-          if (from[axis] < min || from[axis] > max) { enter = 2;break; }
+          if (from[axis] < min || from[axis] > max) {
+            enter = 2;
+            break;
+          }
         } else {
-          let a = (min - from[axis]) / direction, c = (max - from[axis]) / direction;
+          let a = (min - from[axis]) / direction,
+            c = (max - from[axis]) / direction;
           if (a > c) [a, c] = [c, a];
-          enter = Math.max(enter, a);leave = Math.min(leave, c);
+          enter = Math.max(enter, a);
+          leave = Math.min(leave, c);
           if (enter > leave) break;
         }
       }
+      if (b.planes && enter <= leave)
+        for (const [nx, ny, nz, c] of b.planes) {
+          const distance = nx * from.x + ny * from.y + nz * from.z - c - radius * Math.hypot(nx, ny, nz);
+          const direction = nx * (to.x - from.x) + ny * (to.y - from.y) + nz * (to.z - from.z);
+          if (Math.abs(direction) < 1e-9) {
+            if (distance > 0) {
+              enter = 2;
+              break;
+            }
+          } else if (direction < 0) enter = Math.max(enter, -distance / direction);
+          else leave = Math.min(leave, -distance / direction);
+          if (enter > leave) break;
+        }
       // A pitched roof is a convex volume under its actual planes. Clipping
       // the sweep to these planes avoids a phantom wall above the sloped eaves.
       if (b.roof && enter <= leave) {
-        const roof=b.roof, cos=Math.cos(roof.rotation), sin=Math.sin(roof.rotation);
-        const lx=(from.x-b.x)*cos-(from.z-b.z)*sin, lz=(from.x-b.x)*sin+(from.z-b.z)*cos;
-        const vx=(to.x-from.x)*cos-(to.z-from.z)*sin, vz=(to.x-from.x)*sin+(to.z-from.z)*cos;
-        const vy=to.y-from.y, sx=roof.height/(roof.w/2);
-        const planes=[[sx,0,roof.bottom+roof.height],[-sx,0,roof.bottom+roof.height]];
-        if(roof.kind==='hip') {
-          const sz=roof.height/(roof.d*.28), ceiling=roof.bottom+roof.height*.5/.28;
-          planes.push([0,sz,ceiling],[0,-sz,ceiling]);
+        const roof = b.roof,
+          cos = Math.cos(roof.rotation),
+          sin = Math.sin(roof.rotation);
+        const lx = (from.x - b.x) * cos - (from.z - b.z) * sin,
+          lz = (from.x - b.x) * sin + (from.z - b.z) * cos;
+        const vx = (to.x - from.x) * cos - (to.z - from.z) * sin,
+          vz = (to.x - from.x) * sin + (to.z - from.z) * cos;
+        const vy = to.y - from.y,
+          sx = roof.height / (roof.w / 2);
+        const planes = [
+          [sx, 0, roof.bottom + roof.height],
+          [-sx, 0, roof.bottom + roof.height],
+        ];
+        if (roof.kind === 'hip') {
+          const sz = roof.height / (roof.d * 0.28),
+            ceiling = roof.bottom + (roof.height * 0.5) / 0.28;
+          planes.push([0, sz, ceiling], [0, -sz, ceiling]);
         }
-        for(const [nx,nz,ceiling] of planes) {
-          const distance=from.y+nx*lx+nz*lz-ceiling-radius*Math.hypot(1,nx,nz);
-          const direction=vy+nx*vx+nz*vz;
-          if(Math.abs(direction)<1e-9) {if(distance>0){enter=2;break;}}
-          else {
-            const t=-distance/direction;
-            if(direction<0) enter=Math.max(enter,t);else leave=Math.min(leave,t);
-            if(enter>leave) break;
+        for (const [nx, nz, ceiling] of planes) {
+          const distance = from.y + nx * lx + nz * lz - ceiling - radius * Math.hypot(1, nx, nz);
+          const direction = vy + nx * vx + nz * vz;
+          if (Math.abs(direction) < 1e-9) {
+            if (distance > 0) {
+              enter = 2;
+              break;
+            }
+          } else {
+            const t = -distance / direction;
+            if (direction < 0) enter = Math.max(enter, t);
+            else leave = Math.min(leave, t);
+            if (enter > leave) break;
           }
         }
       }
@@ -325,10 +522,27 @@ export function createCollisionIndex() {
     }
     return nearest;
   }
-  return { add, blocked, blockedAt, canOccupy, outsideWorld:(x,z)=>basinRadius(x,z)>CITY.walkRadius, surfaceHeightAt, segmentFraction, hasObstacle, overlapsBox, get count() { return count; } };
+  return {
+    add,
+    setHeight,
+    blocked,
+    blockedAt,
+    canOccupy,
+    outsideWorld: (x, z) => basinRadius(x, z) > CITY.walkRadius,
+    surfaceHeightAt,
+    segmentFraction,
+    hasObstacle,
+    overlapsBox,
+    get count() {
+      return count;
+    },
+  };
 }
 
 export function seededRandom(initial = 20261022) {
   let seed = initial;
-  return () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  return () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
 }

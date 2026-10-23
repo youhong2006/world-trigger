@@ -1,6 +1,18 @@
 # 動畫參考畫面索引
 
-本對話提供 7 張《境界觸發者》動畫截圖，時間與內容如下。**圖片尚未在 GitHub 儲存庫內**；可由本對話的附件取得，或使用另附的參考圖片壓縮包。
+原始對話索引列出 7 張截圖；目前 GitHub 實際已有以下 **9 張 JPG**，全部位於本資料夾，已逐張檢視。下方集數／時間索引保留原始紀錄，不據此假定為官方完整樓層圖。
+
+| 現有檔案 | 用途 |
+| --- | --- |
+| [個人牌位站室1.jpg](個人牌位站室1.jpg) | 中央編號看板、對稱樓梯與上下走道 |
+| [個人牌位站室2.jpg](個人牌位站室2.jpg) | 大螢幕、等候區及上層走廊 |
+| [個人牌位站室3.jpg](個人牌位站室3.jpg) | 編號門、欄杆與人物比例 |
+| [射擊訓練室.jpg](射擊訓練室.jpg) | 射擊隔間、控制終端、靶場 |
+| [射擊訓練室位置圖.jpg](射擊訓練室位置圖.jpg) | 透明量體及下部粉紅帶；不是完整建築剖面 |
+| [指揮室.jpg](指揮室.jpg) | 大型青色螢幕與操作員座席 |
+| [地下遠征艇室.jpg](地下遠征艇室.jpg) | 機庫、維修平台、走道與地面標線 |
+| [訓練空間.jpg](訓練空間.jpg) | 藍色網格虛擬場景 |
+| [訓練空間2.jpg](訓練空間2.jpg) | 模擬地形、高低差與建築 |
 
 | 編號 | 集數 | 影片時間 | 畫面內容 | 主要用途 |
 |---|---|---|---|---|
@@ -12,14 +24,7 @@
 | 06 | 20 | 01:55 | 大型地圖資訊螢幕、門與走道 | 大廳資訊顯示區 |
 | 07 | 20 | 12:16 | 訓練室門與人物比例 | 門、欄杆、走道尺度 |
 
-預計檔名：
-- `assets/references/border-hq/01-ep17-grid-arena.jpg`
-- `assets/references/border-hq/02-ep17-holographic-model.jpg`
-- `assets/references/border-hq/03-ep17-training-terrain.jpg`
-- `assets/references/border-hq/04-ep17-grid-side-view.jpg`
-- `assets/references/border-hq/05-ep19-training-atrium.jpg`
-- `assets/references/border-hq/06-ep20-information-display.jpg`
-- `assets/references/border-hq/07-ep20-doors-scale.jpg`
+先前規劃的 `assets/references/border-hq/` 檔名尚未採用；請以上表實際路徑為準。
 
 ## 資料來源與核對狀態
 - 動畫截圖：使用者提供，集數／時間以畫面左上角及播放器標示為準；02 缺少明確集數時間。

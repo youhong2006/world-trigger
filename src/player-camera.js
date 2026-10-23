@@ -8,7 +8,7 @@ const MAX_DISTANCE = 9;
 
 // Camera collision is independent of the player's capsule: a clear walking
 // position can still put an over-the-shoulder camera on the far side of a wall.
-export function createPlayerCamera({ camera, collision, groundHeight }) {
+export function createPlayerCamera({ camera, collision, groundHeight, getIgnored = () => null }) {
   let mode = 'first', distance = 4.2, initialized = false;
   let customFov=null, shoulder=.25, smooth=12, speedFov=false, reducedMotion=false, currentSpeed=0, aiming=false;
   let actualDistance = 0, obstructed = false;
@@ -31,7 +31,7 @@ export function createPlayerCamera({ camera, collision, groundHeight }) {
   function constrain(from, to, target) {
     const length = from.distanceTo(to);
     if (length < 1e-8) { target.copy(from);return false; }
-    const hit = collision?.segmentFraction?.(from, to, RADIUS);
+    const hit = collision?.segmentFraction?.(from, to, RADIUS, getIgnored());
     let fraction = Number.isFinite(hit) ? MathUtils.clamp(hit, 0, 1) : 1;
     if (fraction < 1) fraction = Math.max(0, fraction - WALL_MARGIN / length);
 

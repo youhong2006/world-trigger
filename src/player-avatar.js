@@ -238,6 +238,7 @@ export function createPlayerAvatar(scene) {
   const feet = [], actions = new Map(), poseBones = [], armBones = [], animatedPose = new Map();
   const severMask=new THREE.Vector4();installBodyMask(fallback.root,severMask);
   let lastCombatSerial=-1;
+  const seatBones=[];let seatBlend=0;
   let handBone=null,leftHandBone=null;const handPoint=new THREE.Vector3();
   const status = { model: MODEL.name, author: MODEL.author, source: MODEL.source, license: MODEL.license,
     loaded: false, loading: true, fallback: true, skinned: true, bones: fallback.bones.length,
@@ -280,11 +281,12 @@ export function createPlayerAvatar(scene) {
     anchor.position.copy(state.position);anchor.rotation.y = state.heading ?? 0;
     crouch = THREE.MathUtils.damp(crouch, state.crouched ? 1 : 0, 12, dt);
     chargeBlend=THREE.MathUtils.damp(chargeBlend,state.charging||state.aiming?1:0,16,dt);
+    seatBlend=THREE.MathUtils.damp(seatBlend,state.hqPose?1:0,16,Math.min(dt,.25));
     status.active = state.animation ?? 'idle';
     if (mixer) {
-      for (const bone of [...poseBones,...armBones]) if (animatedPose.has(bone)) bone.quaternion.copy(animatedPose.get(bone));
+      for (const bone of [...poseBones,...armBones,...seatBones]) if (animatedPose.has(bone)) bone.quaternion.copy(animatedPose.get(bone));
       setAction(state);mixer.update(Math.min(Math.max(dt, 0), .25));
-      for (const bone of [...poseBones,...armBones]) animatedPose.set(bone, bone.quaternion.clone());
+      for (const bone of [...poseBones,...armBones,...seatBones]) animatedPose.set(bone, bone.quaternion.clone());
       // A deeper forward fold fits the imported adult crouch into the same
       // low-clearance body volume, while counter-rotating the head for vision.
       if (poseBones.length === 3) {
@@ -297,10 +299,14 @@ export function createPlayerAvatar(scene) {
       if(state.bladeSide==='sub'&&['attack','charge','guard'].includes(battle?.phase)) {for(const [left,right]of combatMirror){const saved=left.quaternion.clone();left.quaternion.copy(right.quaternion);left.quaternion.y*=-1;left.quaternion.z*=-1;right.quaternion.copy(saved);right.quaternion.y*=-1;right.quaternion.z*=-1;}}
       if(state.crouched&&['attack','charge','guard'].includes(battle?.phase)&&armBones.length===2){const upper=state.bladeSide==='sub'?combatMirror.find(([l,r])=>r===armBones[0])?.[0]:armBones[0],lower=state.bladeSide==='sub'?combatMirror.find(([l,r])=>r===armBones[1])?.[0]:armBones[1];upper?.rotateX(-1.2+(battle.phase==='attack'?Math.sin(battle.elapsed*8)*1.1:0));lower?.rotateX(-.7);}
       if(battle?.phase==='attack'&&armBones.length===2){const pulse=Math.sin(Math.min(1,battle.elapsed/(battle.move==='heavy'?.86:.48))*Math.PI);if(battle.move==='heavy')armBones[0].rotateX(-.35*pulse);if(battle.move==='light2')poseBones[1]?.rotateY(.25*pulse);}
+      if(seatBlend>.001) {
+        for(let i=0;i<seatBones.length;i++) seatBones[i].rotateX((i%2===0?1.45:-1.45)*seatBlend);
+      }
       alignFeet();
     }
     else {
-      fallback.update(clock, state, crouch);fallback.root.position.y = 0;anchor.updateMatrixWorld(true);
+      fallback.update(clock, state, crouch);
+      if(state.hqPose)for(const side of ['l','r']){fallback.bones.find(b=>b.name==='upperleg'+side).rotation.x=1.45;fallback.bones.find(b=>b.name==='lowerleg'+side).rotation.x=-1.45;}fallback.root.position.y = 0;anchor.updateMatrixWorld(true);
       const point = new THREE.Vector3();
       const min = Math.min(...fallback.bones.filter(b => /^foot/.test(b.name)).map(b => b.getWorldPosition(point).y));
       fallback.root.position.y = anchor.position.y + .06 * PERSON.height / 1.8 - min;
@@ -319,6 +325,7 @@ export function createPlayerAvatar(scene) {
       const bone = model.getObjectByName(humanoid[name]);if (bone) poseBones.push(bone);
     }
     for(const suffix of ['Shoulder','UpperArm','LowerArm','Hand']){const left=model.getObjectByName(humanoid['left'+suffix]),right=model.getObjectByName(humanoid['right'+suffix]);if(left&&right)combatMirror.push([left,right]);}
+    for(const name of ['leftUpperLeg','leftLowerLeg','rightUpperLeg','rightLowerLeg']){const bone=model.getObjectByName(humanoid[name]);if(bone)seatBones.push(bone);}
     handBone=model.getObjectByName(humanoid.rightHand);leftHandBone=model.getObjectByName(humanoid.leftHand);
     for(const name of ['rightUpperArm','rightLowerArm']) {const bone=model.getObjectByName(humanoid[name]);if(bone)armBones.push(bone);}
     model.updateMatrixWorld(true);animeMaterials(model);addUniformCoat(model, humanoid);installBodyMask(model,severMask,humanoid);

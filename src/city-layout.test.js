@@ -38,11 +38,11 @@ test('organic streets preserve bridge axes and leave the base approach outside t
 });
 
 
-test('the new base is exactly five times the previous linear dimensions and fits the cleared campus', () => {
+test('base retains the fivefold footprint and the requested 350 metre roof height', () => {
   assert.equal(BASE.scale / BASE.previousScale, 5);
   assert.equal(BASE.width * BASE.scale, 1248);
   assert.equal(BASE.depth * BASE.scale, 800);
-  assert.equal(BASE.height * BASE.scale, 864);
+  assert.equal((BASE.height + BASE.floorHeight) * BASE.scale, 350);
   for (const x of [-BASE.width * BASE.scale / 2, BASE.width * BASE.scale / 2]) {
     for (const z of [BASE.z - BASE.depth * BASE.scale / 2, BASE.z + BASE.depth * BASE.scale / 2]) assert.equal(inCampus(x, z), true);
   }
