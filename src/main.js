@@ -1,7 +1,11 @@
 import * as THREE from 'three';
 import './style.css';
 import { ACTIONS, loadSettings, isPressed, keyLabel } from './game-settings.js';
-import { createCombatCore } from './combat-core.js';
+import { createArmory, SHOOTING_TYPES, shotCost } from './armory.js';
+import { createShootingSystem, createWorldTrace, chooseAimPoint } from './projectiles.js';
+import { createRangeChallenge, RANGE_SPAWN } from './range-challenge.js';
+import { createShootingVisuals } from './shooting-visuals.js';
+import { TRIGGERS, createCombatCore } from './combat-core.js';
 import { createGrasshopper } from './grasshopper.js';
 import { createGrasshopperVisuals } from './grasshopper-visuals.js';
 import { createGameAudio } from './game-audio.js';
@@ -220,8 +224,256 @@ const grasshopper = createGrasshopper({
     if (type === 'blocked') notify('前方沒有足夠空間，換個位置放置蚱蜢');
   },
 });
+const armory = createArmory(storage);
+const traceWorld = createWorldTrace(collision, groundHeight);
+let selectedTargetId = null,
+  fireQueued = false,
+  weaponRevision = 0,
+  lastShotNotice = -Infinity,
+  hitUntil = 0;
+const muzzleMain = new THREE.Vector3(),
+  muzzleSub = new THREE.Vector3(),
+  aimForward = new THREE.Vector3(),
+  aimOrigin = new THREE.Vector3();
+const range = createRangeChallenge({ onFinish: finishChallenge });
+const gunEffects = createShootingVisuals(scene, collision);
+const shooting = createShootingSystem({
+  combat,
+  traceWorld,
+  getTargets: () => range.targets,
+  onEvent(type, detail) {
+    gunEffects.event(type, detail);
+    weaponRevision++;
+    if (type === 'shot') range.recordShot();
+    if (type === 'generate' || type === 'release') audio.tone(type === 'generate' ? 'place' : 'fire');
+    if (type === 'impact' && detail.targetId) {
+      hitUntil = performance.now() + 150;
+      audio.tone('hit');
+    }
+  },
+  onHit(id, damage, point) {
+    range.hit(id, damage);
+  },
+});
+let previousSlots = { main: armory.active('main'), sub: armory.active('sub') };
+armory.subscribe((reason) => {
+  if (reason === 'configure' || reason === 'profile') shooting.clear();
+  for (const side of ['main', 'sub'])
+    if (previousSlots[side] !== armory.active(side)) {
+      shooting.clear(side);
+      previousSlots[side] = armory.active(side);
+    }
+  if (!['main', 'sub'].some((side) => armory.active(side) === 'grasshopper')) grasshopper.cancel();
+  weaponRevision++;
+  lastHud = '';
+});
+function endedChallenge() {
+  return ['victory', 'defeat'].includes(range.snapshot.phase);
+}
+function selectedGun() {
+  const p = armory.profile,
+    side = p.fireSide,
+    type = armory.active(side);
+  return { side, type, config: p.weapons[type] };
+}
+function isAiming() {
+  return (
+    exploring &&
+    !paused &&
+    !endedChallenge() &&
+    actionPressed('aim') &&
+    SHOOTING_TYPES.includes(selectedGun().type)
+  );
+}
+function muzzle(side) {
+  const pivot = new THREE.Vector3(
+      motor.position.x,
+      motor.position.y + motor.eyeHeight * 0.82,
+      motor.position.z,
+    ),
+    right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)),
+    f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  const ideal = pivot
+    .clone()
+    .addScaledVector(right, side === 'main' ? 0.5 : -0.5)
+    .addScaledVector(f, 0.8);
+  const hit = traceWorld(pivot, ideal, 0.06);
+  return ideal.lerpVectors(pivot, ideal, Math.max(0, hit - 0.025));
+}
+function currentAim() {
+  const gun = selectedGun();
+  camera.getWorldDirection(aimForward);
+  aimOrigin.copy(camera.position);
+  return chooseAimPoint({
+    origin: aimOrigin,
+    forward: aimForward,
+    range: gun.config?.range ?? 220,
+    targets: range.targets,
+    traceWorld,
+    assist: isAiming() && gun.config?.aim === 'assist',
+    selectedId: selectedTargetId,
+  });
+}
+function prepareCube() {
+  if (!exploring || paused || endedChallenge()) return;
+  const gun = selectedGun();
+  if (!SHOOTING_TYPES.includes(gun.type)) {
+    notify('此側尚未啟動射擊觸發器，請切換槽位或射擊側');
+    return;
+  }
+  if (shooting.snapshot.prepared[gun.side]) {
+    shooting.clear(gun.side);
+    notify('已收起立方體；生成消耗不退還');
+    return;
+  }
+  if (!shooting.prepare(gun.side, gun.type, gun.config)) notify('三離子不足，或此側仍在發射中');
+}
+function fireCurrent() {
+  if (!exploring || paused || endedChallenge()) return;
+  const gun = selectedGun();
+  if (!SHOOTING_TYPES.includes(gun.type)) {
+    if (performance.now() - lastShotNotice > 1800) {
+      notify('按 F 切換射擊側，或用數字鍵啟動射擊槽位');
+      lastShotNotice = performance.now();
+    }
+    return;
+  }
+  const aim = currentAim();
+  const fired = shooting.fire(gun.side, gun.type, gun.config, muzzle(gun.side), aim.point);
+  if (
+    !fired &&
+    combat.snapshot.remaining < shotCost(gun.config) &&
+    !shooting.snapshot.prepared[gun.side] &&
+    performance.now() - lastShotNotice > 2500
+  ) {
+    notify('三離子不足以生成此彈組，稍待恢復或降低分割數與威力');
+    lastShotNotice = performance.now();
+  }
+}
+function cycleAimTarget() {
+  camera.getWorldDirection(aimForward);
+  const visible = range.targets.filter(
+    (t) =>
+      t.health > 0 &&
+      traceWorld(camera.position, t.position, 0.02) > 0.999 &&
+      new THREE.Vector3().subVectors(t.position, camera.position).normalize().dot(aimForward) > 0.65,
+  );
+  const index = visible.findIndex((t) => t.id === selectedTargetId);
+  selectedTargetId = visible[(index + 1) % visible.length]?.id ?? null;
+  weaponRevision++;
+}
+function finishChallenge(result) {
+  clearInput();
+  shooting.clear();
+  pointerIntent = 'cursor';
+  if (document.pointerLockElement) document.exitPointerLock?.();
+  if (result.phase === 'victory') armory.record(result);
+  const box = document.querySelector('#challenge-result');
+  box.hidden = false;
+  document.querySelector('#result-title').textContent = result.phase === 'victory' ? '挑戰完成' : '挑戰結束';
+  document.querySelector('#result-reason').textContent = {
+    cleared: '六個練習靶已全部擊破',
+    timeout: '時間已到',
+    trion: '三離子耗盡',
+  }[result.reason];
+  document.querySelector('#result-stats').textContent =
+    `擊破 ${result.cleared} / 6 · 用時 ${result.time.toFixed(1)} s · 命中率 ${Math.round(result.accuracy * 100)}% · 分數 ${result.score}`;
+  const best = armory.snapshot.best;
+  if (best) document.querySelector('#result-stats').textContent += ` · 最佳 ${Math.round(best.score)} 分`;
+  weaponRevision++;
+  syncPlayerHud(true);
+}
+function startChallenge() {
+  const p = armory.profile;
+  let side = ['main', 'sub'].find((side) => SHOOTING_TYPES.includes(armory.active(side)));
+  if (!side) {
+    for (const candidate of ['main', 'sub']) {
+      const slot = p[candidate].findIndex((t) => SHOOTING_TYPES.includes(t));
+      if (slot >= 0) {
+        armory.selectSlot(candidate, slot);
+        side = candidate;
+        break;
+      }
+    }
+  }
+  if (!side) {
+    notify('先在配裝加入小行星彈，再開始射擊挑戰');
+    ui.open('loadout');
+    return;
+  }
+  if (ui.isOpen) ui.close();
+  enter();
+  armory.setSide(side);
+  range.start();
+  shooting.reset();
+  selectedTargetId = null;
+  safeSpawn = {
+    point: { x: RANGE_SPAWN.x, y: groundHeight(RANGE_SPAWN.x, RANGE_SPAWN.z), z: RANGE_SPAWN.z },
+    yaw: RANGE_SPAWN.yaw,
+    pitch: 0,
+  };
+  yaw = safeSpawn.yaw;
+  pitch = 0;
+  motor.teleport(safeSpawn.point, yaw);
+  playerView.reset();
+  playerView.update(0, viewState());
+  document.querySelector('#location').textContent = 'BORDER 射擊演習區';
+  document.querySelector('#challenge-result').hidden = true;
+  weaponRevision++;
+  syncPlayerHud(true);
+  notify('90 秒內擊破六靶。左鍵發射、右鍵瞄準，E 可預先生成立方體。');
+}
+let lastSlotMarkup = '';
+function updateWeaponHud() {
+  const p = armory.profile,
+    gun = selectedGun(),
+    shots = shooting.snapshot,
+    challenge = range.snapshot;
+  document.querySelector('#weapon-name').textContent = TRIGGERS[gun.type]?.name ?? '空槽';
+  document.querySelector('#weapon-side').textContent = p.fireSide === 'main' ? '主側' : '副側';
+  document.querySelector('#weapon-details').textContent = gun.config
+    ? `${gun.config.count} 發 · ${gun.config.mode === 'burst' ? '分批' : '齊射'} · ${gun.config.range} m · 消耗 ${shotCost(gun.config).toFixed(1)}`
+    : '切換至射擊槽位以發射';
+  document.querySelector('#weapon-ready').textContent = shots.prepared[gun.side]
+    ? '立方體就緒'
+    : shots.pending
+      ? '正在發射'
+      : `${keyLabel(settings.bindings.prepare)} 生成 · ${keyLabel(settings.bindings.fire)} 發射`;
+  document.querySelector('#weapon-special').hidden = !['viper', 'meteor'].includes(gun.type);
+  document.querySelector('#weapon-profile').textContent = p.name;
+  const slotMarkup = ['main', 'sub']
+    .map(
+      (side) =>
+        `<div><span>${side === 'main' ? '主' : '副'}</span>${p[side].map((id, i) => `<button data-slot="${side}:${i}" class="${p[side === 'main' ? 'activeMain' : 'activeSub'] === i ? 'selected' : ''}" title="${TRIGGERS[id]?.name ?? '空槽'}"><kbd>${keyLabel(settings.bindings['slot' + (i + (side === 'main' ? 1 : 5))])}</kbd><small>${TRIGGERS[id]?.name ?? '—'}</small></button>`).join('')}</div>`,
+    )
+    .join('');
+  if (slotMarkup !== lastSlotMarkup) {
+    lastSlotMarkup = slotMarkup;
+    document.querySelector('#weapon-slots').innerHTML = slotMarkup;
+    document.querySelectorAll('[data-slot]').forEach(
+      (b) =>
+        (b.onclick = () => {
+          const [side, n] = b.dataset.slot.split(':');
+          armory.selectSlot(side, Number(n));
+        }),
+    );
+  }
+  document.querySelector('#range-hud').hidden = challenge.phase === 'idle';
+  document.querySelector('#range-time').textContent = challenge.remaining.toFixed(1);
+  document.querySelector('#range-count').textContent = `${challenge.cleared} / ${challenge.total}`;
+  document.querySelector('#exhausted-notice').hidden =
+    combat.snapshot.state !== 'exhausted' || challenge.phase !== 'idle';
+}
+
 function viewState() {
-  return { position: motor.position, eyeHeight: motor.eyeHeight, yaw, pitch, speed: motor.speed };
+  return {
+    position: motor.position,
+    eyeHeight: motor.eyeHeight,
+    yaw,
+    pitch,
+    speed: motor.speed,
+    aiming: isAiming(),
+  };
 }
 function actionPressed(action) {
   if (isPressed(keys, settings, action)) return true;
@@ -249,13 +501,14 @@ function clearInput() {
   jumpQueued = false;
   sprintLatched = false;
   dragging = false;
+  fireQueued = false;
   grasshopper.cancel();
   if (!settings.crouchToggle) crouchRequested = false;
 }
 function syncPlayerHud(force = false) {
   const core = combat.snapshot,
     gh = grasshopper.snapshot;
-  const signature = `${playerView.mode}/${motor.crouched}/${motor.animation}/${core.remaining.toFixed(1)}/${core.state}/${motor.speed.toFixed(1)}/${Math.round(motor.position.y)}/${gh.pads.length}/${core.recovery}/${JSON.stringify(settings.bindings)}`;
+  const signature = `${playerView.mode}/${motor.crouched}/${motor.animation}/${core.remaining.toFixed(1)}/${core.state}/${motor.speed.toFixed(1)}/${Math.round(motor.position.y)}/${gh.pads.length}/${core.recovery}/${JSON.stringify(settings.bindings)}/${weaponRevision}/${Math.round(range.snapshot.remaining * 10)}`;
   if (!force && signature === lastHud) return;
   lastHud = signature;
   document.body.classList.toggle('third-person', playerView.mode === 'third');
@@ -299,9 +552,11 @@ function syncPlayerHud(force = false) {
     ? '放開即可釋放'
     : core.state === 'exhausted'
       ? '三離子耗盡'
-      : `按住準備 · 放開釋放`;
+      : !['main', 'sub'].some((side) => armory.active(side) === 'grasshopper')
+        ? '未啟動蚱蜢槽位'
+        : `按住準備 · 放開釋放`;
   document.querySelector('.ability-card').classList.toggle('charging', gh.charging);
-  document.querySelector('#exhausted-notice').hidden = core.state !== 'exhausted';
+  updateWeaponHud();
   document.querySelector('#walk-hint').textContent =
     `${keyLabel(settings.bindings.forward)}${keyLabel(settings.bindings.left)}${keyLabel(settings.bindings.back)}${keyLabel(settings.bindings.right)} 移動 · ${keyLabel(settings.bindings.sprint)} 衝刺 · ${keyLabel(settings.bindings.jump)} 跳躍 · Esc 選單`;
 }
@@ -314,6 +569,7 @@ function applySettings(value) {
   grasshopper.configure(value.boostSpeed);
   audio.configure(value);
   effects.configure(value);
+  gunEffects.configure(value);
   const resolution = Math.min(2, (devicePixelRatio || 1) * value.resolution);
   if (renderer.getPixelRatio() !== resolution) renderer.setPixelRatio(resolution);
   if (renderer.shadowMap.enabled !== value.shadows) {
@@ -379,6 +635,9 @@ function resume() {
 }
 function enter() {
   if (ui.isOpen) ui.close();
+  range.reset();
+  shooting.reset();
+  document.querySelector('#challenge-result').hidden = true;
   exploring = true;
   paused = false;
   clearInput();
@@ -415,6 +674,10 @@ function leave() {
   grasshopper.reset();
   combat.reset();
   effects.hide();
+  shooting.reset();
+  range.reset();
+  gunEffects.hideWeapons();
+  document.querySelector('#challenge-result').hidden = true;
   avatar.setVisible(false);
   document.body.classList.remove('exploring', 'third-person');
   document.body.classList.add('overview');
@@ -427,6 +690,10 @@ function leave() {
   renderRequested = true;
 }
 function respawn() {
+  if (range.snapshot.phase !== 'idle') {
+    startChallenge();
+    return;
+  }
   if (!exploring || !safeSpawn) {
     notify('開始演習後可返回起點');
     return;
@@ -437,6 +704,8 @@ function respawn() {
   pitch = safeSpawn.pitch;
   motor.teleport(safeSpawn.point, yaw);
   combat.reset();
+  shooting.reset();
+  range.reset();
   if (paused) combat.pause(true);
   grasshopper.reset();
   playerView.reset();
@@ -459,7 +728,11 @@ function toggleCrouch() {
   if (exploring && !paused) crouchRequested = motor.crouched ? false : !crouchRequested;
 }
 function beginCast() {
-  if (!exploring || paused || combat.snapshot.state === 'exhausted') return;
+  if (!exploring || paused || endedChallenge() || combat.snapshot.state === 'exhausted') return;
+  if (!['main', 'sub'].some((side) => armory.active(side) === 'grasshopper')) {
+    notify('目前啟動的槽位沒有蚱蜢，請用數字鍵切換');
+    return;
+  }
   if (!grasshopper.begin())
     notify(combat.snapshot.remaining < 4 ? '三離子不足，稍待恢復或返回起點' : '技能尚在準備，稍後再試');
 }
@@ -471,6 +744,8 @@ function releaseCast() {
 ui = createGameUI({
   settings,
   storage,
+  armory,
+  onStartChallenge: startChallenge,
   onSettings: applySettings,
   onPause: pause,
   onResume: resume,
@@ -481,6 +756,17 @@ ui = createGameUI({
 });
 applySettings(settings);
 document.querySelector('#enter').onclick = enter;
+document.querySelector('#start-challenge').onclick = startChallenge;
+document.querySelector('#retry-challenge').onclick = startChallenge;
+document.querySelector('#finish-challenge').onclick = () => {
+  range.reset();
+  respawn();
+  document.querySelector('#challenge-result').hidden = true;
+};
+document.querySelector('#prepare-cube').onclick = prepareCube;
+document.querySelector('#fire-cube').onclick = () => {
+  fireCurrent();
+};
 document.querySelector('#camera-view').onclick = toggleView;
 document.querySelector('#crouch-toggle').onclick = toggleCrouch;
 document.querySelector('#player-reset').onclick = respawn;
@@ -519,6 +805,7 @@ combat.subscribe((event) => {
     pointerIntent = 'cursor';
     clearInput();
     if (document.pointerLockElement) document.exitPointerLock?.();
+    range.fail();
     notify('三離子耗盡，請返回起點重整');
   }
 });
@@ -578,6 +865,25 @@ document.querySelector('#sound').onclick = () => {
   ui.update({ muted: !settings.muted });
   audio.start();
 };
+function dispatchAction(action) {
+  if (action === 'jump') jumpQueued = true;
+  if (action === 'sprint' && settings.sprintToggle) sprintLatched = !sprintLatched;
+  if (action === 'crouch') {
+    if (settings.crouchToggle) toggleCrouch();
+    else crouchRequested = true;
+  }
+  if (action === 'view') toggleView();
+  if (action === 'reset') respawn();
+  if (action === 'grasshopper') beginCast();
+  if (action === 'prepare') prepareCube();
+  if (action === 'fire') fireQueued = true;
+  if (action === 'swapSide') armory.setSide(armory.profile.fireSide === 'main' ? 'sub' : 'main');
+  if (action === 'cycleTarget') cycleAimTarget();
+  if (/^slot[1-8]$/.test(action ?? '')) {
+    const n = Number(action.slice(4)) - 1;
+    armory.selectSlot(n < 4 ? 'main' : 'sub', n % 4);
+  }
+}
 window.addEventListener('keydown', (event) => {
   if (event.code === 'F2' && !event.repeat) {
     event.preventDefault();
@@ -614,15 +920,7 @@ window.addEventListener('keydown', (event) => {
   if (exploring && (action || event.code.startsWith('Arrow'))) event.preventDefault();
   keys[event.code] = true;
   if (!exploring || event.repeat) return;
-  if (action === 'jump') jumpQueued = true;
-  if (action === 'sprint' && settings.sprintToggle) sprintLatched = !sprintLatched;
-  if (action === 'crouch') {
-    if (settings.crouchToggle) toggleCrouch();
-    else crouchRequested = true;
-  }
-  if (action === 'view') toggleView();
-  if (action === 'reset') respawn();
-  if (action === 'grasshopper') beginCast();
+  dispatchAction(action);
 });
 window.addEventListener('keyup', (event) => {
   keys[event.code] = false;
@@ -643,7 +941,13 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 renderer.domElement.addEventListener('pointerdown', (event) => {
-  if (paused || ui.isOpen) return;
+  if (paused || ui.isOpen || endedChallenge()) return;
+  const wasLocked = document.pointerLockElement === renderer.domElement;
+  if (exploring && wasLocked) {
+    const code = 'Mouse' + event.button;
+    keys[code] = true;
+    dispatchAction(Object.keys(ACTIONS).find((id) => settings.bindings[id] === code));
+  }
   if (exploring || document.body.classList.contains('overview')) {
     dragging = true;
     lastX = event.clientX;
@@ -654,7 +958,11 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
     }
   }
 });
-window.addEventListener('pointerup', () => {
+renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
+window.addEventListener('pointerup', (event) => {
+  keys['Mouse' + event.button] = false;
+  if (settings.bindings.crouch === 'Mouse' + event.button && !settings.crouchToggle) crouchRequested = false;
+  if (settings.bindings.grasshopper === 'Mouse' + event.button && !paused && !ui.isOpen) releaseCast();
   dragging = false;
 });
 window.addEventListener('pointermove', (event) => {
@@ -675,7 +983,7 @@ window.addEventListener('pointermove', (event) => {
   }
   if (document.pointerLockElement === renderer.domElement || dragging) {
     const locked = document.pointerLockElement === renderer.domElement,
-      scale = 0.002 * settings.sensitivity;
+      scale = 0.002 * settings.sensitivity * (isAiming() ? settings.aimSensitivity : 1);
     yaw -= (locked ? event.movementX : event.clientX - lastX) * scale;
     pitch = THREE.MathUtils.clamp(
       pitch - (locked ? event.movementY : event.clientY - lastY) * scale * (settings.invertY ? -1 : 1),
@@ -825,7 +1133,10 @@ renderer.setAnimationLoop((now) => {
     while (remaining > 1e-7) {
       const dt = Math.min(remaining, 1 / 120),
         from = { ...motor.position };
+      if (endedChallenge()) break;
       combat.update(dt);
+      range.update(dt);
+      shooting.update(dt);
       grasshopper.update(dt);
       motor.update(dt, exhausted ? {} : input, yaw);
       if (combat.snapshot.state !== 'exhausted') grasshopper.checkStep(from, motor.position, input, yaw);
@@ -845,6 +1156,9 @@ renderer.setAnimationLoop((now) => {
     playerView.update(elapsed, viewState());
     const state = motor.state;
     state.charging = grasshopper.snapshot.charging;
+    state.aiming = isAiming();
+    state.aimPitch = pitch;
+    if (state.aiming) state.heading = yaw;
     avatar.update(elapsed, state);
     avatar.setVisible(playerView.avatarVisible);
     if (playerView.mode === 'first') {
@@ -853,6 +1167,18 @@ renderer.setAnimationLoop((now) => {
       hand.copy(camera.position).addScaledVector(direction, 0.65).addScaledVector(rightVector, 0.3);
       hand.y -= 0.28;
     } else hand.copy(avatar.handPosition());
+    if (!endedChallenge() && (actionPressed('fire') || fireQueued)) fireCurrent();
+    fireQueued = false;
+    const aim = currentAim(),
+      t = range.targets.find((t) => t.id === aim.targetId);
+    document.querySelector('#target-readout').textContent = t
+      ? `${t.id} · ${Math.ceil(t.health)} / ${t.maxHealth}`
+      : '';
+    document.querySelector('.reticle').classList.toggle('hit', performance.now() < hitUntil);
+    document.body.classList.toggle('aiming', isAiming());
+    muzzleMain.copy(muzzle('main'));
+    muzzleSub.copy(muzzle('sub'));
+    gunEffects.update(elapsed, shooting.snapshot, range.targets, { main: muzzleMain, sub: muzzleSub }, true);
     const gh = grasshopper.snapshot;
     effects.update(elapsed, gh, hand, motor.grounded ? grasshopper.preview(yaw) : null, true);
     syncPlayerHud();
@@ -898,6 +1224,9 @@ window.__mikado = {
       objects: scene.children.length,
       player: { ...motor.state, view: playerView.diagnostics, avatar: avatar.diagnostics },
       combat: combat.snapshot,
+      shooting: shooting.snapshot,
+      range: range.snapshot,
+      armory: armory.snapshot,
       grasshopper: grasshopper.snapshot,
       settings: structuredClone(settings),
       ui: ui.diagnostics,

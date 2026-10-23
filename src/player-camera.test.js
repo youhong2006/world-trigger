@@ -92,3 +92,15 @@ test('camera settings affect FOV, shoulder, distance and optional speed feedback
   const player=state({speed:42});view.update(1/60,player);assert.equal(camera.fov,87);assert.equal(view.diagnostics.shoulder,-.32);near(view.diagnostics.desiredDistance,6);
   view.configure({fov:80,shoulder:'right',speedFov:true,reducedMotion:true});view.update(1/60,player);assert.equal(camera.fov,80);assert.equal(view.diagnostics.shoulder,.32);assert.deepEqual(player.position,{x:0,y:0,z:0});
 });
+test('aiming narrows the view and suppresses speed FOV in both perspectives', () => {
+  const { camera, view } = setup();
+  view.configure({ fov: 75, speedFov: true });
+  view.setMode('third');
+  view.update(1 / 60, state({ speed: 50, aiming: true }));
+  assert.equal(camera.fov, 59);
+  view.setMode('first');
+  view.update(1 / 60, state({ speed: 50, aiming: true }));
+  assert.equal(camera.fov, 59);
+  view.update(1 / 60, state({ speed: 50 }));
+  assert.equal(camera.fov, 82);
+});

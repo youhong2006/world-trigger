@@ -234,7 +234,7 @@ export function createPlayerAvatar(scene) {
     lastState = state;clock += Math.min(Math.max(dt, 0), .25);
     anchor.position.copy(state.position);anchor.rotation.y = state.heading ?? 0;
     crouch = THREE.MathUtils.damp(crouch, state.crouched ? 1 : 0, 12, dt);
-    chargeBlend=THREE.MathUtils.damp(chargeBlend,state.charging?1:0,16,dt);
+    chargeBlend=THREE.MathUtils.damp(chargeBlend,state.charging||state.aiming?1:0,16,dt);
     status.active = state.animation ?? 'idle';
     if (mixer) {
       for (const bone of [...poseBones,...armBones]) if (animatedPose.has(bone)) bone.quaternion.copy(animatedPose.get(bone));
@@ -246,7 +246,7 @@ export function createPlayerAvatar(scene) {
         poseBones[0].rotateX(-.33 * crouch);poseBones[1].rotateX(-.22 * crouch);poseBones[2].rotateX(.55 * crouch);
       }
       if(chargeBlend>.001 && armBones.length===2) {
-        armBones[0].rotateX(-.65*chargeBlend);armBones[0].rotateZ(-.55*chargeBlend);armBones[1].rotateX(-1.1*chargeBlend);
+        armBones[0].rotateX((-.65-(state.aimPitch??0)*.5)*chargeBlend);armBones[0].rotateZ(-.55*chargeBlend);armBones[1].rotateX(-1.1*chargeBlend);
       }
       alignFeet();
     }

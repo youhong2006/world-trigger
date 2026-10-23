@@ -9,6 +9,8 @@ import {
   saveSettings,
   SETTINGS_KEY,
 } from './game-settings.js';
+import { EQUIPPABLE, SHOOTING_TYPES, FIRE_RANGES, shotCost } from './armory.js';
+import { samplePolyline } from './trajectory-plan.js';
 import { TRIGGERS } from './combat-core.js';
 import { PATH_TEMPLATES, cleanDraft, loadDraft, saveDraft } from './trajectory-plan.js';
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -17,6 +19,7 @@ const labels = {
   ambientVolume: '環境音量',
   effectsVolume: '技能音效',
   sensitivity: '滑鼠靈敏度',
+  aimSensitivity: '瞄準靈敏度倍率',
   walkSpeed: '一般移動速度',
   runSpeed: '衝刺速度',
   jumpSpeed: '起跳速度',
@@ -77,7 +80,7 @@ const selectLabels = {
   crosshair: '準星樣式',
 };
 const categories = {
-  操作: ['sensitivity', 'invertY', 'sprintToggle', 'crouchToggle'],
+  操作: ['sensitivity', 'aimSensitivity', 'invertY', 'sprintToggle', 'crouchToggle'],
   移動: ['walkSpeed', 'runSpeed', 'jumpSpeed', 'boostSpeed'],
   鏡頭: ['cameraMode', 'fov', 'cameraDistance', 'shoulder', 'cameraSmooth', 'speedFov', 'reducedMotion'],
   畫質: ['quality', 'resolution', 'shadows', 'detailDistance', 'fpsLimit'],
@@ -103,6 +106,8 @@ function valueLabel(key, value) {
 export function createGameUI({
   settings: initial,
   storage,
+  armory,
+  onStartChallenge,
   onSettings,
   onPause,
   onResume,
@@ -118,7 +123,9 @@ export function createGameUI({
     previousFocus = null,
     activePath = 0,
     selectedPoint = 1,
-    rotation = 0.45;
+    rotation = 0.45,
+    weaponType = 'asteroid',
+    pathFrame = null;
   let drafts = loadDraft(storage);
   const dialog = $('#console'),
     content = $('#console-content');
@@ -135,7 +142,12 @@ export function createGameUI({
   function saveTactics() {
     if (!saveDraft(storage, drafts)) notify('瀏覽器儲存不可用，草稿只保留在本次開啟期間');
   }
+  function stopPreview() {
+    if (pathFrame) cancelAnimationFrame(pathFrame);
+    pathFrame = null;
+  }
   function close() {
+    stopPreview();
     binding = null;
     if (dialog.open) dialog.close();
     onResume();
@@ -151,6 +163,7 @@ export function createGameUI({
     render();
   }
   function setTab(next) {
+    stopPreview();
     binding = null;
     tab = next;
     render();
@@ -177,7 +190,7 @@ export function createGameUI({
         )
         .join('')}</div>`;
     if (category === '其他')
-      body = `<div class="utility-grid"><button id="fullscreen-toggle">⛶ 切換全螢幕</button><button id="export-settings">↓ 匯出設定與草稿</button><label class="file-button">↑ 匯入設定與草稿<input type="file" id="import-settings" accept="application/json,.json"></label><button id="defaults-settings">↺ 恢復預設設定</button></div><p class="panel-note">匯出包含按鍵、音量、畫面、裝備草稿與彈道路線；不包含角色位置。恢復預設不會清除配裝與彈道草稿。支援桌面鍵盤與滑鼠。</p>`;
+      body = `<div class="utility-grid"><button id="fullscreen-toggle">⛶ 切換全螢幕</button><button id="export-settings">↓ 匯出完整存檔</button><label class="file-button">↑ 匯入完整存檔<input type="file" id="import-settings" accept="application/json,.json"></label><button id="defaults-settings">↺ 恢復預設設定</button></div><p class="panel-note">存檔包含設定、所有配裝、彈種參數、彈道路線與最佳成績；不包含角色位置及進行中的挑戰。恢復預設只重設系統設定。存檔保存在此瀏覽器，可匯出備份或轉移裝置。</p>`;
     content.innerHTML = `<div class="panel-heading"><span class="eyebrow">SYSTEM CONFIGURATION</span><h3>系統設定</h3><p>調整你的操作節奏。變更立即生效。</p></div><div class="settings-tabs" role="tablist" aria-label="設定分類">${Object.keys(
       categories,
     )
@@ -259,7 +272,7 @@ export function createGameUI({
         }
       };
       $('#export-settings').onclick = () => {
-        const data = JSON.stringify({ version: 1, settings, drafts }, null, 2),
+        const data = JSON.stringify({ version: 2, settings, drafts, armory: armory.snapshot }, null, 2),
           url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
         const a = document.createElement('a');
         a.href = url;
@@ -276,10 +289,11 @@ export function createGameUI({
           if (!data.settings || typeof data.settings !== 'object') throw Error();
           settings = normalizeSettings(data.settings);
           if (data.drafts) drafts = cleanDraft(data.drafts);
+          if (data.armory) armory.import(data.armory);
           saveTactics();
           persist();
           renderSettings();
-          notify('已匯入設定與草稿');
+          notify('已匯入存檔');
         } catch {
           notify('無法匯入，請選擇有效的設定 JSON');
         }
@@ -287,28 +301,80 @@ export function createGameUI({
     }
   }
   function renderLoadout() {
-    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">TRIGGER CONFIGURATION</span><h3>觸發器配裝</h3><p>蚱蜢已可實際使用。其他裝備可先保存為草稿。</p></div><div class="loadout-banner"><div class="trion-cube" aria-hidden="true">◇</div><div><span class="eyebrow">MOBILITY / ACTIVE</span><h4>蚱蜢機動配置</h4><p>三離子消耗 4 · 跳板保留 12 秒<br>空中可連續彈射 · 無方向輸入時垂直向上</p></div></div><div class="trigger-grid">${Object.entries(
-      TRIGGERS,
-    )
-      .map(
-        ([id, t]) =>
-          `<label class="trigger-option ${t.available ? 'available' : ''}"><input type="checkbox" data-equipment="${id}" ${drafts.equipment.includes(id) ? 'checked' : ''} ${id === 'grasshopper' ? 'disabled' : ''}><span><b>${t.name}</b><small>${t.english}</small></span><em>${t.available ? '可使用' : '規劃草稿'}</em><p>${t.description}</p></label>`,
-      )
-      .join(
-        '',
-      )}</div><p class="panel-note">勾選會自動保存為配裝草稿。武器戰鬥、裝備槽數與同時啟動上限會在戰鬥階段確認。</p>`;
-    content.querySelectorAll('[data-equipment]').forEach(
-      (c) =>
-        (c.onchange = () => {
-          const id = c.dataset.equipment;
-          drafts.equipment = c.checked
-            ? [...new Set([...drafts.equipment, id])]
-            : drafts.equipment.filter((x) => x !== id);
-          saveTactics();
+    const state = armory.snapshot,
+      p = armory.profile,
+      cfg = p.weapons[weaponType];
+    const slotSide = (side, title) =>
+      `<section class="slot-side"><h4>${title}<small>同時啟動一項</small></h4>${p[side].map((id, i) => `<div class="slot-row ${p[side === 'main' ? 'activeMain' : 'activeSub'] === i ? 'selected' : ''}"><button data-active-side="${side}" data-active-index="${i}" title="啟動此槽位"><kbd>${keyLabel(settings.bindings['slot' + (i + (side === 'main' ? 1 : 5))])}</kbd></button><select data-slot-side="${side}" data-slot-index="${i}" aria-label="${title}槽位 ${i + 1}"><option value="">空槽</option>${EQUIPPABLE.map((t) => `<option value="${t}" ${t === id ? 'selected' : ''}>${TRIGGERS[t].name}${t === 'viper' || t === 'meteor' ? '（直射測試）' : ''}</option>`).join('')}</select></div>`).join('')}<button data-fire-side="${side}" class="side-focus ${p.fireSide === side ? 'selected' : ''}">${p.fireSide === side ? '● 目前射擊側' : '設為射擊側'}</button></section>`;
+    const numeric = (key, label, unit = '') =>
+      `<label class="weapon-field"><span>${label}</span><input type="range" data-fire-param="${key}" min="${FIRE_RANGES[key][0]}" max="${FIRE_RANGES[key][1]}" step="${['damage', 'speed', 'range'].includes(key) ? 1 : 0.01}" value="${cfg[key]}"><output>${Number(cfg[key]).toFixed(['damage', 'speed', 'range'].includes(key) ? 0 : 2)}${unit}</output></label>`;
+    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">TRIGGER LOADOUT / LIVE</span><h3>自由配裝</h3><p>主、副各四槽，兩側各啟動一項。按數字鍵切換槽位，F 切換射擊側。</p></div><div class="profile-toolbar"><label>配置<select id="kit-choice">${state.profiles.map((kit) => `<option value="${esc(kit.id)}" ${kit.id === p.id ? 'selected' : ''}>${esc(kit.name)}</option>`).join('')}</select></label><label>名稱<input id="kit-name" maxlength="30" value="${esc(p.name)}"></label><button id="kit-add">＋ 複製配置</button><button id="kit-remove" ${state.profiles.length <= 1 ? 'disabled' : ''}>刪除配置</button></div><div class="slots-layout">${slotSide('main', '主側')}${slotSide('sub', '副側')}</div><div class="weapon-heading"><h4>彈種參數</h4><select id="weapon-type">${SHOOTING_TYPES.map((type) => `<option value="${type}" ${type === weaponType ? 'selected' : ''}>${TRIGGERS[type].name}</option>`).join('')}</select><span id="weapon-cost">生成消耗 ${shotCost(cfg).toFixed(1)} 三離子</span></div>${weaponType !== 'asteroid' ? '<p class="special-notice">此彈種目前使用小行星直射規則。毒蛇轉折與美特拉爆炸效果保留，等後續確認再加入。</p>' : ''}<div class="weapon-fields"><label class="weapon-field"><span>立方體分割</span><select id="weapon-count">${[1, 8, 27].map((n) => `<option value="${n}" ${cfg.count === n ? 'selected' : ''}>${n} 發</option>`).join('')}</select></label><label class="weapon-field"><span>發射方式</span><select id="weapon-mode"><option value="volley" ${cfg.mode === 'volley' ? 'selected' : ''}>齊射</option><option value="burst" ${cfg.mode === 'burst' ? 'selected' : ''}>依序分批</option></select></label>${numeric('damage', '每發傷害')}${numeric('speed', '彈速', ' m/s')}${numeric('range', '射程', ' m')}${numeric('spread', '散射角度', '°')}${numeric('delay', '釋放延遲', ' s')}${numeric('interval', '分批間隔', ' s')}<label class="weapon-field"><span>瞄準方式</span><select id="weapon-aim"><option value="manual" ${cfg.aim === 'manual' ? 'selected' : ''}>手動準星</option><option value="assist" ${cfg.aim === 'assist' ? 'selected' : ''}>輔助瞄準（需按住瞄準）</option></select></label><label class="weapon-field"><span>預留彈道路線</span><select id="weapon-path"><option value="">未指定</option>${cfg.pathId && !drafts.paths.some((path) => path.id === cfg.pathId) ? `<option value="${esc(cfg.pathId)}" selected>原路線已刪除，請重選</option>` : ''}${drafts.paths.map((path) => `<option value="${esc(path.id)}" ${cfg.pathId === path.id ? 'selected' : ''}>${esc(path.name)}</option>`).join('')}</select></label></div><p class="panel-note">配置即時生效並自動保存，最多 6 套。生成立方體時扣款；切換該側裝備會收起未發射的立方體，不退還已消耗三離子。小行星維持直射，指定路線只保存給未來的特殊彈種。</p><div class="storage-status">${state.saved ? '● 配置已保存至此瀏覽器' : '⚠ 無法永久保存，本次配置仍生效'}</div>`;
+    $('#kit-choice').onchange = (e) => {
+      armory.choose(e.target.value);
+      renderLoadout();
+    };
+    $('#kit-name').onchange = (e) => {
+      armory.rename(e.target.value);
+      e.target.value = armory.profile.name;
+      $('#kit-choice').selectedOptions[0].textContent = armory.profile.name;
+    };
+    $('#kit-add').onclick = () => {
+      if (!armory.add()) notify('最多保存 6 套配置');
+      renderLoadout();
+    };
+    $('#kit-remove').onclick = () => {
+      armory.remove();
+      renderLoadout();
+    };
+    content.querySelectorAll('[data-slot-side]').forEach(
+      (el) =>
+        (el.onchange = () => {
+          armory.equip(el.dataset.slotSide, Number(el.dataset.slotIndex), el.value || null);
+          renderLoadout();
+        }),
+    );
+    content.querySelectorAll('[data-active-side]').forEach(
+      (el) =>
+        (el.onclick = () => {
+          armory.selectSlot(el.dataset.activeSide, Number(el.dataset.activeIndex));
+          renderLoadout();
+        }),
+    );
+    content.querySelectorAll('[data-fire-side]').forEach(
+      (el) =>
+        (el.onclick = () => {
+          armory.setSide(el.dataset.fireSide);
+          renderLoadout();
+        }),
+    );
+    $('#weapon-type').onchange = (e) => {
+      weaponType = e.target.value;
+      renderLoadout();
+    };
+    for (const [id, key, convert] of [
+      ['weapon-count', 'count', Number],
+      ['weapon-mode', 'mode', String],
+      ['weapon-aim', 'aim', String],
+      ['weapon-path', 'pathId', String],
+    ])
+      $('#' + id).onchange = (e) => {
+        armory.configure(weaponType, { [key]: convert(e.target.value) });
+        renderLoadout();
+      };
+    content.querySelectorAll('[data-fire-param]').forEach(
+      (el) =>
+        (el.oninput = () => {
+          const key = el.dataset.fireParam;
+          armory.configure(weaponType, { [key]: Number(el.value) });
+          el.nextElementSibling.textContent = Number(el.value).toFixed(
+            ['damage', 'speed', 'range'].includes(key) ? 0 : 2,
+          );
+          $('#weapon-cost').textContent =
+            `生成消耗 ${shotCost(armory.profile.weapons[weaponType]).toFixed(1)} 三離子`;
         }),
     );
   }
-  function drawPath() {
+  function drawPath(progress = null) {
     const canvas = $('#path-preview');
     if (!canvas) return;
     const ctx = canvas.getContext('2d'),
@@ -364,6 +430,13 @@ export function createGameUI({
       ctx.font = '13px sans-serif';
       ctx.fillText(i === 0 ? '起點' : i === 3 ? '目標' : `轉折 ${i}`, x + 12, y - 8);
     });
+    if (progress !== null) {
+      const q = project(samplePolyline(points, progress));
+      ctx.fillStyle = '#d0ffff';
+      ctx.beginPath();
+      ctx.arc(...q, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
     const svg = $('#path-top');
     if (svg) {
       svg.innerHTML =
@@ -377,16 +450,28 @@ export function createGameUI({
     }
   }
   function renderPath() {
+    stopPreview();
     activePath = Math.min(activePath, drafts.paths.length - 1);
     const path = drafts.paths[activePath];
-    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">TRAJECTORY LAB / DRAFT</span><h3>彈道規劃</h3><p>選擇範本、拖曳俯視節點並調整高度。此處保存路線草稿，尚未接上實戰射擊。</p></div><div class="path-toolbar"><label>路線<select id="path-choice">${drafts.paths.map((p, i) => `<option value="${i}" ${i === activePath ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label><label>範本<select id="path-template"><option value="">套用範本…</option>${Object.entries(
+    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">TRAJECTORY LAB / DRAFT</span><h3>彈道規劃</h3><p>選擇範本、拖曳俯視節點並調整高度。保存路線並連結到配裝。小行星維持直射，毒蛇轉折與美特拉爆炸效果等待後續調整。</p></div><div class="path-toolbar"><label>路線<select id="path-choice">${drafts.paths.map((p, i) => `<option value="${i}" ${i === activePath ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label><label>範本<select id="path-template"><option value="">套用範本…</option>${Object.entries(
       PATH_TEMPLATES,
     )
       .map(([id, t]) => `<option value="${id}">${t.name}</option>`)
       .join(
         '',
-      )}</select></label><button id="path-new">＋ 新路線</button><button id="path-delete" ${drafts.paths.length <= 1 ? 'disabled' : ''}>刪除</button></div><div class="path-layout"><div class="path-visual"><canvas id="path-preview" width="640" height="380" aria-label="彈道立體預覽"></canvas><label class="rotation-control">預覽角度<input id="path-rotation" type="range" min="-3.14" max="3.14" step=".01" value="${rotation}"></label></div><div class="path-editor"><span class="eyebrow">俯視編輯 · 拖曳節點</span><svg id="path-top" viewBox="0 0 360 280" aria-label="拖曳彈道節點調整水平位置"></svg></div></div><div class="path-properties"><label>路線名稱<input id="path-name" maxlength="30" value="${esc(path.name)}"></label><label>選擇節點<select id="point-choice">${path.points.map((p, i) => `<option value="${i}" ${i === selectedPoint ? 'selected' : ''}>${i === 0 ? '起點' : i === 3 ? '目標' : '轉折 ' + i}</option>`).join('')}</select></label><label>節點高度<input id="point-height" type="range" min="0" max="20" step=".5" value="${path.points[selectedPoint][1]}"><output id="point-height-value">${path.points[selectedPoint][1]} m</output></label></div><p class="panel-note">草稿已自動保存。最多 8 組路線；實戰的快捷鍵調用與多組發射會隨射擊系統加入。</p>`;
+      )}</select></label><button id="path-new">＋ 新路線</button><button id="path-simulate">▷ 模擬路線</button><button id="path-delete" ${drafts.paths.length <= 1 ? 'disabled' : ''}>刪除</button></div><div class="path-layout"><div class="path-visual"><canvas id="path-preview" width="640" height="380" aria-label="彈道立體預覽"></canvas><label class="rotation-control">預覽角度<input id="path-rotation" type="range" min="-3.14" max="3.14" step=".01" value="${rotation}"></label></div><div class="path-editor"><span class="eyebrow">俯視編輯 · 拖曳節點</span><svg id="path-top" viewBox="0 0 360 280" aria-label="拖曳彈道節點調整水平位置"></svg></div></div><div class="path-properties"><label>路線名稱<input id="path-name" maxlength="30" value="${esc(path.name)}"></label><label>選擇節點<select id="point-choice">${path.points.map((p, i) => `<option value="${i}" ${i === selectedPoint ? 'selected' : ''}>${i === 0 ? '起點' : i === 3 ? '目標' : '轉折 ' + i}</option>`).join('')}</select></label><label>節點高度<input id="point-height" type="range" min="0" max="20" step=".5" value="${path.points[selectedPoint][1]}"><output id="point-height-value">${path.points[selectedPoint][1]} m</output></label></div><p class="panel-note">最多保存 8 組路線。可在配裝指定預留路線；本次的齊射、分批與延遲發射使用直射規則，不套用特殊轉折。</p>`;
     drawPath();
+    $('#path-simulate').onclick = () => {
+      stopPreview();
+      const start = performance.now();
+      const frame = (now) => {
+        if (!dialog.open || tab !== 'trajectory') return;
+        const t = Math.min(1, (now - start) / 1800);
+        drawPath(t);
+        if (t < 1) pathFrame = requestAnimationFrame(frame);
+      };
+      pathFrame = requestAnimationFrame(frame);
+    };
     $('#path-choice').onchange = (e) => {
       activePath = Number(e.target.value);
       renderPath();
@@ -403,6 +488,7 @@ export function createGameUI({
         return;
       }
       drafts.paths.push({
+        id: 'route-' + Date.now().toString(36),
         name: '新路線 ' + (drafts.paths.length + 1),
         points: structuredClone(PATH_TEMPLATES.direct.points),
       });
@@ -417,10 +503,10 @@ export function createGameUI({
       saveTactics();
       renderPath();
     };
-    $('#path-name').onchange = (e) => {
+    $('#path-name').oninput = (e) => {
       path.name = e.target.value.trim().slice(0, 30) || '未命名路線';
       saveTactics();
-      renderPath();
+      $('#path-choice').options[activePath].textContent = path.name;
     };
     $('#point-choice').onchange = (e) => {
       selectedPoint = Number(e.target.value);
@@ -440,6 +526,7 @@ export function createGameUI({
     let dragging = null;
     svg.onpointerdown = (e) => {
       if (e.target.dataset.point === undefined) return;
+      stopPreview();
       dragging = selectedPoint = Number(e.target.dataset.point);
       $('#point-choice').value = selectedPoint;
       $('#point-height').value = path.points[selectedPoint][1];
@@ -486,7 +573,7 @@ export function createGameUI({
       return;
     }
     if (tab === 'guide') {
-      content.innerHTML = `<div class="panel-heading"><span class="eyebrow">FIELD MANUAL</span><h3>機動演習指南</h3><p>先掌握移動，再把每一次彈射連成路線。</p></div><div class="guide-cards"><article><b>01 / 準備與放置</b><p>按住 <kbd>${keyLabel(settings.bindings.grasshopper)}</kbd>，手中出現亮青色光球。地面放開後，跳板生成在前方；走上去才會彈射。</p></article><article><b>02 / 方向與空中接續</b><p>踩中時按住方向鍵，沿該方向微微向上彈射。沒有方向輸入則垂直向上。空中放開觸發鍵，立即在腳下彈射。</p></article><article><b>03 / 三離子與跳板</b><p>每次生成消耗 4 三離子，12 秒未使用便消失。跳板只能用一次。停止施放後會少量恢復；耗盡時返回起點重整。</p></article><article><b>04 / 暫停與操作</b><p>Esc 開啟暫停選單，F2 開設定；Tab 釋放游標，點場景繼續環顧。切換視窗時自動暫停。可在設定自訂按鍵、速度及畫質。</p></article></div><dl class="guide-bindings">${Object.entries(
+      content.innerHTML = `<div class="panel-heading"><span class="eyebrow">FIELD MANUAL</span><h3>射擊與機動指南</h3><p>左鍵發射、右鍵瞄準、E 生成立方體；射擊時也能使用蚱蜢移動。</p></div><div class="guide-cards"><article><b>射擊 / 生成與發射</b><p>E 生成並保存立方體；左鍵發射，沒有立方體時會先生成。按住左鍵可連續射擊。右鍵瞄準，配裝可選手動或輔助瞄準，T 切換目標。</p></article><article><b>配裝 / 主副側</b><p>1–4 切主槽、5–8 切副槽，F 切換射擊側。Q 使用目前啟動的蚱蜢；兩側各啟動一項。配裝與按鍵均可自訂，生成時扣除三離子。</p></article><article><b>01 / 準備與放置</b><p>按住 <kbd>${keyLabel(settings.bindings.grasshopper)}</kbd>，手中出現亮青色光球。地面放開後，跳板生成在前方；走上去才會彈射。</p></article><article><b>02 / 方向與空中接續</b><p>踩中時按住方向鍵，沿該方向微微向上彈射。沒有方向輸入則垂直向上。空中放開觸發鍵，立即在腳下彈射。</p></article><article><b>03 / 三離子與跳板</b><p>每次生成消耗 4 三離子，12 秒未使用便消失。跳板只能用一次。停止施放後會少量恢復；耗盡時返回起點重整。</p></article><article><b>04 / 暫停與操作</b><p>Esc 開啟暫停選單，F2 開設定；Tab 釋放游標，點場景繼續環顧。切換視窗時自動暫停。可在設定自訂按鍵、速度及畫質。</p></article></div><dl class="guide-bindings">${Object.entries(
         ACTIONS,
       )
         .map(([id, name]) => `<dt><kbd>${keyLabel(settings.bindings[id])}</kbd></dt><dd>${name}</dd>`)
@@ -495,8 +582,18 @@ export function createGameUI({
         )}</dl><p class="panel-note">步行涉水會返回起點；可用蚱蜢從空中跨河。手機可瀏覽場景與設定，完整操作以桌面鍵盤滑鼠為主。<br><a href="./models/avatar/ATTRIBUTION.md" target="_blank" rel="noopener">角色模型與動畫授權 ↗</a></p>`;
       return;
     }
-    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">FIELD EXERCISE PAUSED</span><h3>準備下一次躍進。</h3><p>調整配置，或回到城市繼續練習。</p></div><div class="pause-banner"><div class="orbit-symbol" aria-hidden="true">◈</div><span>MIKADO / MOBILITY TRAINING</span><strong>蚱蜢機動演習</strong><p>第三人稱 · 城市與屋頂 · 三離子系統</p></div><div class="pause-actions"><button class="primary" id="resume-play">繼續 / 回到場景 ↗</button><button id="reset-play">返回起點並重整</button><button id="leave-play">返回城市總覽</button></div><p class="panel-note">本階段開放高速移動與蚱蜢。AI、刀劍與子彈戰鬥將在後續加入。</p>`;
+    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">FIELD EXERCISE PAUSED</span><h3>準備下一次躍進。</h3><p>調整配置，或回到城市繼續練習。</p></div><div class="pause-banner"><div class="orbit-symbol" aria-hidden="true">◈</div><span>MIKADO / MOBILITY TRAINING</span><strong>小行星射擊演習</strong><p>第三人稱 · 立方體射擊 · 蚱蜢機動</p></div><div class="pause-actions"><button class="primary" id="resume-play">繼續 / 回到場景 ↗</button><button id="start-range-play">開始射擊挑戰</button><button id="reset-play">返回起點／重試</button><button id="leave-play">返回城市總覽</button></div><p class="panel-note">射擊挑戰使用非敵人的固定練習靶。90 秒內擊破六靶，可查看成績與重新挑戰；本次不加入 AI。</p>`;
+    const best = armory.snapshot.best;
+    if (best)
+      content.insertAdjacentHTML(
+        'beforeend',
+        `<p class="storage-status">最佳成績 ${Math.round(best.score)} 分 · ${best.time.toFixed(1)} s · 命中率 ${Math.round(best.accuracy * 100)}%</p>`,
+      );
     $('#resume-play').onclick = close;
+    $('#start-range-play').onclick = () => {
+      close();
+      onStartChallenge();
+    };
     $('#reset-play').onclick = () => {
       onReset();
       close();
@@ -507,6 +604,23 @@ export function createGameUI({
     };
   }
   dialog.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
+  window.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (!dialog.open || !binding || event.pointerType !== 'mouse') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const code = 'Mouse' + event.button;
+      if (validBinding(code)) {
+        settings = rebind(settings, binding, code);
+        binding = null;
+        persist();
+        renderSettings();
+      }
+    },
+    true,
+  );
+  dialog.addEventListener('contextmenu', (event) => event.preventDefault());
   $('#close-console').onclick = close;
   dialog.addEventListener('cancel', (e) => {
     e.preventDefault();

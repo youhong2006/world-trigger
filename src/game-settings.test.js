@@ -65,3 +65,13 @@ test('tactical draft import rejects malformed routes and caps editable points an
   assert.deepEqual(result.equipment, ['grasshopper', 'viper']);
   assert.equal(cleanDraft({ paths: [{ points: [[NaN]] }] }).paths.length, 1);
 });
+test('older saves gain unique shooting controls and mouse rebinding swaps correctly', () => {
+  const old = normalizeSettings({ bindings: { grasshopper: 'KeyE' } });
+  assert.equal(old.bindings.grasshopper, 'KeyE');
+  assert.notEqual(old.bindings.prepare, 'KeyE');
+  assert.equal(old.bindings.fire, 'Mouse0');
+  const changed = rebind(old, 'prepare', 'Mouse0');
+  assert.equal(changed.bindings.prepare, 'Mouse0');
+  assert.equal(changed.bindings.fire, old.bindings.prepare);
+  assert.equal(new Set(Object.values(changed.bindings)).size, Object.keys(ACTIONS).length);
+});

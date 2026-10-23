@@ -10,14 +10,14 @@ const MAX_DISTANCE = 9;
 // position can still put an over-the-shoulder camera on the far side of a wall.
 export function createPlayerCamera({ camera, collision, groundHeight }) {
   let mode = 'first', distance = 4.2, initialized = false;
-  let customFov=null, shoulder=.25, smooth=12, speedFov=false, reducedMotion=false, currentSpeed=0;
+  let customFov=null, shoulder=.25, smooth=12, speedFov=false, reducedMotion=false, currentSpeed=0, aiming=false;
   let actualDistance = 0, obstructed = false;
   const lastPivot = new Vector3();
   const pivot = new Vector3(), forward = new Vector3(), right = new Vector3();
   const desired = new Vector3(), resolved = new Vector3(), lookTarget = new Vector3();
 
   function projection() {
-    const fov = (customFov ?? (mode === 'first' ? 62 : 60)) + (speedFov && !reducedMotion ? Math.min(7,Math.max(0,currentSpeed-14)*.25) : 0);
+    const fov = (customFov ?? (mode === 'first' ? 62 : 60)) - (aiming?16:0) + (speedFov && !reducedMotion && !aiming ? Math.min(7,Math.max(0,currentSpeed-14)*.25) : 0);
     if (camera.fov !== fov || camera.near !== .10) {
       camera.fov = fov;camera.near = .10;camera.updateProjectionMatrix();
     }
@@ -66,8 +66,8 @@ export function createPlayerCamera({ camera, collision, groundHeight }) {
     return mode;
   }
 
-  function update(dt, { position, eyeHeight = PERSON.eyeHeight, yaw = 0, pitch = 0, speed = 0 }) {
-    currentSpeed = speed;
+  function update(dt, { position, eyeHeight = PERSON.eyeHeight, yaw = 0, pitch = 0, speed = 0, aiming:aim = false }) {
+    currentSpeed = speed;aiming=aim;
     projection();
     const viewPitch = MathUtils.clamp(pitch, -Math.PI / 2 + .06, Math.PI / 2 - .06);
     camera.rotation.order = 'YXZ';

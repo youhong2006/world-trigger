@@ -4,11 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0" />
     <meta name="theme-color" content="#091d2b" />
-    <meta
-      name="description"
-      content="三門市第三人稱機動演習。使用亮青色蚱蜢觸發器，在街道與屋頂之間高速移動。"
-    />
-    <title>三門市 MIKADO — 機動演習</title>
+    <meta name="description" content="三門市單人射擊與機動演習。自由配裝小行星彈與蚱蜢，挑戰六個練習靶。" />
+    <title>三門市 MIKADO — 射擊與機動演習</title>
   </head>
   <body>
     <div id="scene" aria-label="三門市三維場景"></div>
@@ -18,7 +15,7 @@
         ><span class="brand-icon">◈</span><span>MIKADO<small>BORDER FIELD SYSTEM</small></span></a
       >
       <nav aria-label="主要選單">
-        <span class="mode-indicator"><i class="live-dot"></i>單人機動演習</span
+        <span class="mode-indicator"><i class="live-dot"></i>單人射擊演習</span
         ><button id="help" title="操作指南">操作指南</button
         ><button id="settings-open" title="設定（F2）">⚙ <span>設定</span></button
         ><button id="menu-open" title="選單（Esc）">☰ <span>選單</span></button>
@@ -26,12 +23,15 @@
     </header>
     <main id="exploration-home">
       <section class="intro">
-        <div class="eyebrow"><span>FIELD EXERCISE / 01</span><b>機動訓練開放</b></div>
+        <div class="eyebrow"><span>FIELD EXERCISE / 01</span><b>射擊演習開放</b></div>
         <h1>三門市<span>跨越街道，躍上天際。</span></h1>
         <p>以蚱蜢穿梭街道與屋頂。<br />掌握方向、速度，以及下一次彈射。</p>
-        <button class="primary" id="enter">開始演習 <span>↗</span></button>
+        <div class="home-actions">
+          <button class="primary" id="start-challenge">射擊挑戰 <span>↗</span></button
+          ><button id="enter">自由演習</button>
+        </div>
         <div class="intro-note"><kbd>Q</kbd><small>按住準備 · 放開釋放蚱蜢</small></div>
-        <p class="build-note">目前開放機動訓練；AI 與武器戰鬥將於後續加入。</p>
+        <p class="build-note">小行星彈射擊與蚱蜢已開放。練習靶挑戰，不含 AI。</p>
       </section>
       <div class="world-label"><i class="live-dot"></i> MIKADO CITY <span>城市全域 · 自由選擇起點</span></div>
       <section class="places" aria-label="選擇演習起點">
@@ -70,6 +70,31 @@
       ><button id="reset" title="返回起點">↺</button>
     </div>
     <div id="walking" hidden>
+      <section class="weapon-card hud-card">
+        <div class="hud-caption">
+          SHOOTER / <span id="weapon-side">主側</span><button data-console="loadout">配裝 ↗</button>
+        </div>
+        <strong id="weapon-name">小行星彈</strong><small id="weapon-profile">標準射手</small>
+        <p id="weapon-details"></p>
+        <span id="weapon-ready"></span>
+        <p id="weapon-special" hidden>直射測試 · 特殊效果待調整</p>
+        <div class="weapon-actions">
+          <button id="prepare-cube">生成／收起</button><button id="fire-cube">發射</button>
+        </div>
+        <div id="weapon-slots"></div>
+      </section>
+      <div id="target-readout"></div>
+      <div id="range-hud" hidden>
+        <span>射擊挑戰</span><strong id="range-time">90.0</strong><span>秒</span><b id="range-count">0 / 6</b>
+      </div>
+      <section id="challenge-result" hidden>
+        <span class="eyebrow">SHOOTING EXERCISE</span>
+        <h2 id="result-title">挑戰完成</h2>
+        <p id="result-reason"></p>
+        <p id="result-stats"></p>
+        <button id="retry-challenge">重新挑戰</button
+        ><button id="finish-challenge">結束挑戰，返回起點</button>
+      </section>
       <div class="reticle" aria-hidden="true"><span></span></div>
       <div class="flight-readout">
         <span id="movement-state" role="status" aria-live="polite">站立</span><b id="speed-value">0.0</b

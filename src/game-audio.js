@@ -54,10 +54,15 @@ export function createGameAudio() {
     const oscillator = context.createOscillator(),
       gain = context.createGain(),
       now = context.currentTime;
-    const boost = kind === 'launch';
-    oscillator.type = boost ? 'sine' : 'triangle';
-    oscillator.frequency.setValueAtTime(boost ? 240 : 650, now);
-    oscillator.frequency.exponentialRampToValueAtTime(boost ? 1100 : 400, now + 0.12);
+    const boost = kind === 'launch',
+      fire = kind === 'fire',
+      hit = kind === 'hit';
+    oscillator.type = boost || hit ? 'sine' : 'triangle';
+    oscillator.frequency.setValueAtTime(boost ? 240 : fire ? 950 : hit ? 1450 : 650, now);
+    oscillator.frequency.exponentialRampToValueAtTime(
+      boost ? 1100 : fire ? 180 : hit ? 2100 : 400,
+      now + (hit ? 0.06 : 0.12),
+    );
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(boost ? 0.13 : 0.055, now + 0.012);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.23);

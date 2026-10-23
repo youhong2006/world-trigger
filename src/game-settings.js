@@ -9,7 +9,20 @@ export const ACTIONS = {
   crouch: '蹲下／站立',
   grasshopper: '蚱蜢（按住準備、放開釋放）',
   view: '切換視角',
-  reset: '返回起點',
+  reset: '返回起點／重試挑戰',
+  prepare: '生成立方體／收起',
+  fire: '發射（按住連發）',
+  aim: '瞄準（按住）',
+  swapSide: '切換射擊側',
+  cycleTarget: '切換輔助目標',
+  slot1: '主槽 1',
+  slot2: '主槽 2',
+  slot3: '主槽 3',
+  slot4: '主槽 4',
+  slot5: '副槽 1',
+  slot6: '副槽 2',
+  slot7: '副槽 3',
+  slot8: '副槽 4',
 };
 export const DEFAULTS = Object.freeze({
   masterVolume: 0.7,
@@ -18,6 +31,7 @@ export const DEFAULTS = Object.freeze({
   muted: false,
   muteOnBlur: true,
   sensitivity: 1,
+  aimSensitivity: 0.55,
   invertY: false,
   sprintToggle: false,
   crouchToggle: true,
@@ -55,6 +69,19 @@ export const DEFAULTS = Object.freeze({
     grasshopper: 'KeyQ',
     view: 'KeyV',
     reset: 'KeyR',
+    prepare: 'KeyE',
+    fire: 'Mouse0',
+    aim: 'Mouse2',
+    swapSide: 'KeyF',
+    cycleTarget: 'KeyT',
+    slot1: 'Digit1',
+    slot2: 'Digit2',
+    slot3: 'Digit3',
+    slot4: 'Digit4',
+    slot5: 'Digit5',
+    slot6: 'Digit6',
+    slot7: 'Digit7',
+    slot8: 'Digit8',
   },
 });
 export const RANGES = {
@@ -62,6 +89,7 @@ export const RANGES = {
   ambientVolume: [0, 1],
   effectsVolume: [0, 1],
   sensitivity: [0.15, 3],
+  aimSensitivity: [0.15, 1.5],
   walkSpeed: [2, 9],
   runSpeed: [6, 24],
   jumpSpeed: [6, 18],
@@ -101,7 +129,7 @@ export const RESERVED = new Set([
 export function validBinding(code) {
   return (
     typeof code === 'string' &&
-    /^(Key[A-Z]|Digit[0-9]|Arrow(Up|Down|Left|Right)|Space|Shift(Left|Right)|Control(Left|Right)|Alt(Left|Right)|Enter|Backspace|Bracket(Left|Right))$/.test(
+    /^(Mouse[012]|Key[A-Z]|Digit[0-9]|Arrow(Up|Down|Left|Right)|Space|Shift(Left|Right)|Control(Left|Right)|Alt(Left|Right)|Enter|Backspace|Bracket(Left|Right))$/.test(
       code,
     ) &&
     !RESERVED.has(code)
@@ -153,6 +181,9 @@ export function rebind(settings, action, code) {
 export function keyLabel(code) {
   return (
     {
+      Mouse0: '滑鼠左鍵',
+      Mouse1: '滑鼠中鍵',
+      Mouse2: '滑鼠右鍵',
       Space: 'Space',
       ShiftLeft: 'L Shift',
       ShiftRight: 'R Shift',

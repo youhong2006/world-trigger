@@ -9,11 +9,12 @@ export const TRIGGERS = Object.freeze({
     description: '地面放置，踩踏彈射。空中釋放立即啟動，無方向輸入則向上。',
   },
   asteroid: {
-    name: '普通彈',
+    name: '小行星彈',
     english: 'ASTEROID',
-    available: false,
+    cost: 9,
+    available: true,
     kind: '射擊',
-    description: '直射子彈。射擊與命中系統將在後續階段加入。',
+    description: '普通直射三離子彈，可調整分割數量、威力、速度與射程。',
   },
   hound: {
     name: '追蹤彈',
@@ -23,18 +24,20 @@ export const TRIGGERS = Object.freeze({
     description: '追蹤移動目標。尚未加入實戰。',
   },
   viper: {
-    name: '變化彈',
+    name: '毒蛇',
     english: 'VIPER',
-    available: false,
+    cost: 9,
+    available: true,
     kind: '射擊',
-    description: '依預設轉折路線飛行。可先使用彈道規劃器。',
+    description: '保留發射選項，目前使用小行星直射規則；特殊路線稍後調整。',
   },
   meteor: {
-    name: '炸裂彈',
+    name: '美特拉',
     english: 'METEOR',
-    available: false,
+    cost: 9,
+    available: true,
     kind: '射擊',
-    description: '範圍爆炸。尚未加入實戰。',
+    description: '保留發射選項，目前使用小行星直射規則；爆炸效果稍後調整。',
   },
   blade: {
     name: '刀劍',
@@ -59,14 +62,16 @@ export function createCombatCore({ maximum = 100, recovery = 1.5, recoveryDelay 
     const event = { type, ...detail, sequence: ++sequence, time };
     for (const listener of listeners) listener(event);
   }
-  function canUse(id) {
+  function canUse(id, cost = TRIGGERS[id]?.cost, parallel = false) {
     const skill = TRIGGERS[id];
     return (
       !!skill?.available &&
       state !== 'exhausted' &&
       state !== 'paused' &&
-      (!charging || charging === id) &&
-      remaining >= skill.cost
+      (!charging || charging === id || parallel) &&
+      Number.isFinite(cost) &&
+      cost > 0 &&
+      remaining >= cost
     );
   }
   function begin(id) {
@@ -81,13 +86,13 @@ export function createCombatCore({ maximum = 100, recovery = 1.5, recoveryDelay 
     charging = null;
     if (state === 'charging') state = 'ready';
   }
-  function consume(id) {
-    if (!canUse(id)) return false;
-    remaining = Math.max(0, remaining - TRIGGERS[id].cost);
+  function consume(id, cost = TRIGGERS[id]?.cost, { parallel = false } = {}) {
+    if (!canUse(id, cost, parallel)) return false;
+    remaining = Math.max(0, remaining - cost);
     lastSpend = time;
-    charging = null;
-    state = remaining <= 0 ? 'exhausted' : 'ready';
-    emit('consume', { skill: id, cost: TRIGGERS[id].cost });
+    if (!parallel || charging === id) charging = null;
+    state = remaining <= 0 ? 'exhausted' : charging ? 'charging' : 'ready';
+    emit('consume', { skill: id, cost });
     if (state === 'exhausted') emit('exhausted');
     return true;
   }

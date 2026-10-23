@@ -1807,3 +1807,396 @@ input:not([type]) {
     gap: 5px;
   }
 }
+/* Shooter terminal and the first solo exercise. */
+.home-actions {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+.home-actions button {
+  flex: 1;
+  white-space: nowrap;
+}
+.profile-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: end;
+  margin-bottom: 22px;
+}
+.profile-toolbar label {
+  display: grid;
+  gap: 7px;
+  flex: 1;
+  min-width: 135px;
+  color: #8eb5c8;
+  font-size: 11px;
+}
+.profile-toolbar input,
+.profile-toolbar select {
+  width: 100%;
+}
+.profile-toolbar button {
+  padding: 10px;
+  font-size: 11px;
+}
+.slots-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.slot-side {
+  border: 1px solid #71c4e135;
+  border-radius: 4px;
+  padding: 15px;
+  background: #10304655;
+}
+.slot-side h4 {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 12px;
+  font-weight: 500;
+}
+.slot-side h4 small {
+  color: #86acbd;
+  font-size: 10px;
+  font-weight: 400;
+}
+.slot-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 7px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+}
+.slot-row.selected {
+  border-color: #1ed0e881;
+  background: #17a6bb15;
+}
+.slot-row button {
+  border: 0;
+  background: transparent;
+  padding: 3px;
+}
+.slot-row select {
+  width: 100%;
+  min-width: 0;
+}
+.side-focus {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 11px;
+  padding: 8px;
+}
+.side-focus.selected {
+  color: #99f9ff;
+  border-color: #20bdd1;
+}
+.weapon-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 20px;
+}
+.weapon-heading h4 {
+  margin-right: auto;
+  font-weight: 500;
+}
+.weapon-heading span {
+  color: #73dfeb;
+  font-size: 11px;
+}
+.weapon-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+}
+.weapon-field {
+  display: grid;
+  gap: 7px;
+  color: #9cbfce;
+  font-size: 11px;
+}
+.weapon-field select {
+  width: 100%;
+}
+.weapon-field div {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.weapon-field input {
+  width: 100%;
+  min-width: 0;
+  accent-color: #1ccbdd;
+}
+.weapon-field output {
+  min-width: 64px;
+  color: #a7eff4;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.special-notice {
+  padding: 12px;
+  border-left: 2px solid #f4b67c;
+  background: #f4b67c0d;
+  color: #e3c8aa;
+  font-size: 11px;
+  line-height: 1.8;
+}
+.storage-status {
+  color: #89cbd7;
+  font-size: 10px;
+  margin-top: 16px;
+}
+.weapon-card {
+  left: 3.5%;
+  bottom: 224px;
+  width: 252px;
+  transform-origin: left bottom;
+  border-top: 2px solid #24cadc;
+}
+.weapon-card > strong {
+  display: inline-block;
+  margin: 10px 8px 0 0;
+  color: #b8f9ff;
+  font-size: 17px;
+  font-weight: 500;
+}
+#weapon-profile {
+  font-size: 9px;
+  color: #8baec0;
+}
+#weapon-details {
+  color: #9cbfcd;
+  font-size: 9px;
+  margin: 7px 0;
+}
+#weapon-ready {
+  color: #78e7ed;
+  font-size: 10px;
+}
+#weapon-special {
+  font-size: 9px;
+  color: #efbd8e;
+  margin: 6px 0;
+}
+.weapon-actions {
+  display: flex;
+  gap: 6px;
+  margin: 10px 0;
+}
+.weapon-actions button {
+  flex: 1;
+  font-size: 9px;
+  padding: 5px;
+}
+#weapon-slots > div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+#weapon-slots > div > span {
+  color: #80a8bb;
+  font-size: 9px;
+  margin-right: 4px;
+}
+#weapon-slots button {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 1px;
+  background: #0b293a;
+}
+#weapon-slots kbd {
+  border: 0;
+  background: none;
+  font-size: 9px;
+  padding: 0;
+  color: #b3dfec;
+}
+#weapon-slots small {
+  display: block;
+  font-size: 8px;
+  margin-top: 3px;
+  color: #8eb8c6;
+  white-space: nowrap;
+}
+#weapon-slots button.selected {
+  border-color: #22becf;
+  background: #164052;
+}
+#target-readout {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 25px);
+  transform: translateX(-50%);
+  color: #9bfbff;
+  font-size: 11px;
+  text-shadow: 0 1px 4px #002339;
+}
+#range-hud {
+  position: absolute;
+  top: 108px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  border: 1px solid #4ac3d651;
+  border-radius: 4px;
+  background: #0b2b3dde;
+  color: #a0cbd9;
+  font-size: 10px;
+}
+#range-hud strong {
+  font:
+    24px ui-monospace,
+    monospace;
+  color: #c5ffff;
+}
+#range-count {
+  border-left: 1px solid #77b8cf55;
+  padding-left: 12px;
+  font-size: 13px;
+}
+#challenge-result {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(540px, 90vw);
+  padding: 30px;
+  border: 1px solid #5ad3e688;
+  background: #082433f5;
+  box-shadow: 0 15px 100px #0009;
+  border-radius: 7px;
+  pointer-events: auto;
+  text-align: center;
+  z-index: 12;
+}
+#challenge-result h2 {
+  font-weight: 500;
+  color: #adfbff;
+}
+#challenge-result p {
+  line-height: 1.9;
+  font-size: 12px;
+  color: #a6c9d7;
+}
+#challenge-result button {
+  padding: 10px 14px;
+  margin: 8px 3px 0;
+  font-size: 12px;
+}
+#challenge-result button:first-of-type {
+  background: #147a8e;
+  border-color: #20c4d7;
+}
+.reticle.hit {
+  filter: drop-shadow(0 0 4px #67faff);
+  color: #b4ffff;
+}
+.reticle.hit span {
+  position: absolute;
+  inset: -5px;
+  border: 1px solid #98faff;
+  transform: rotate(45deg);
+}
+body.aiming .reticle {
+  transform: translate(-50%, -50%) scale(0.75);
+}
+#walking [hidden] {
+  display: none !important;
+}
+@media (min-width: 761px) and (max-width: 1050px) {
+  .weapon-card {
+    bottom: 270px;
+    width: 225px;
+    padding: 12px;
+  }
+}
+@media (max-height: 700px) and (min-width: 761px) {
+  .weapon-card {
+    bottom: 235px;
+    padding: 10px;
+    width: 225px;
+  }
+  .weapon-actions {
+    display: none;
+  }
+  #weapon-profile {
+    display: none;
+  }
+  #weapon-slots small {
+    font-size: 7px;
+  }
+}
+@media (max-width: 760px) {
+  .slots-layout {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .weapon-fields {
+    grid-template-columns: 1fr;
+  }
+  .profile-toolbar {
+    gap: 8px;
+  }
+  .profile-toolbar label {
+    min-width: 100px;
+  }
+  .weapon-card {
+    left: 14px;
+    bottom: 165px;
+    width: 190px;
+    padding: 10px;
+  }
+  .weapon-actions,
+  #weapon-profile {
+    display: none;
+  }
+  .weapon-card > strong {
+    font-size: 13px;
+    margin-top: 7px;
+  }
+  #weapon-details {
+    font-size: 8px;
+  }
+  #weapon-slots small {
+    font-size: 7px;
+  }
+  #weapon-slots button {
+    padding: 3px 0;
+  }
+  #range-hud {
+    top: 104px;
+    gap: 6px;
+    padding: 6px 10px;
+    white-space: nowrap;
+  }
+  #range-hud strong {
+    font-size: 19px;
+  }
+  #range-hud > span:first-child {
+    display: none;
+  }
+  #challenge-result {
+    padding: 20px;
+  }
+}
+
+@media (max-height: 700px) and (min-width: 761px) {
+  .flight-readout {
+    bottom: 206px;
+  }
+}
+@media (max-width: 760px) {
+  .flight-readout {
+    bottom: 355px;
+  }
+}
