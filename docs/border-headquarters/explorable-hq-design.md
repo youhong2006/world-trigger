@@ -1,6 +1,6 @@
 # 可自由探索 BORDER 總部：3D 場景設計與實作規格
 
-> 狀態：設計提案，尚未實作。以下 B2–6F 全為 **C 級遊戲原創配置**，不是官方樓層表。請參照 README.md / layout.md / references.md 的 A/B/C 證據分級。
+> 狀態：原始設計提案留存；實際擴充版本與新樓層表見 [implementation.md](implementation.md)。以下 B2–6F 全為 **C 級遊戲原創配置**，不是官方樓層表。請參照 README.md / layout.md / references.md 的 A/B/C 證據分級。
 
 ## 目標
 從既有三門市 Three.js 場景步行進入 BORDER 總部，保持第三人稱/第一人稱、碰撞、移動、戰鬥與設定功能。室內可探索、可透過樓梯及電梯移動、可進出各小隊房間、訓練室與指揮中心；外部城市不得被替換。

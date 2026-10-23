@@ -1,7 +1,8 @@
 import * as THREE from 'three';
+import { clipExcavationTriangle } from './hq-terrain.js';
 import { CITY, basinRadius, terrainHeight } from './city-layout.js';
 
-const clamp = value => Math.max(0, Math.min(1, value));
+const clamp = (value) => Math.max(0, Math.min(1, value));
 
 // Shared by terrain vertices and the overview map: all vegetation shades blend continuously.
 export function terrainRGB(x, z, height = terrainHeight(x, z)) {
@@ -16,11 +17,17 @@ export function terrainRGB(x, z, height = terrainHeight(x, z)) {
   const plain = [119 + variation, 157 + variation, 86 + variation * 0.6];
   const woodland = [48, 100, 58];
   const ridge = [107, 132, 117];
-  return plain.map((value, i) => (value * (1 - forest) + woodland[i] * forest) * (1 - high) + ridge[i] * high);
+  return plain.map(
+    (value, i) => (value * (1 - forest) + woodland[i] * forest) * (1 - high) + ridge[i] * high,
+  );
 }
 
 export function createLandscape(scene) {
-  const rings = 256, segments = 320, positions = [], colors = [], indices = [];
+  const rings = 256,
+    segments = 320,
+    positions = [],
+    colors = [],
+    indices = [];
   const color = new THREE.Color();
   function vertex(x, z) {
     const h = terrainHeight(x, z);
@@ -33,10 +40,10 @@ export function createLandscape(scene) {
   for (let ring = 1; ring <= rings; ring++) {
     const radius = CITY.terrainRadius * (ring / rings) ** 1.65;
     for (let i = 0; i < segments; i++) {
-      const angle = i / segments * Math.PI * 2;
+      const angle = (i / segments) * Math.PI * 2;
       vertex(Math.cos(angle) * radius, Math.sin(angle) * radius);
       const current = 1 + (ring - 1) * segments + i;
-      const next = 1 + (ring - 1) * segments + (i + 1) % segments;
+      const next = 1 + (ring - 1) * segments + ((i + 1) % segments);
       if (ring === 1) indices.push(0, next, current);
       else {
         const inner = current - segments;
@@ -45,12 +52,41 @@ export function createLandscape(scene) {
       }
     }
   }
+  // The campus apron and HQ supply their own surfaces; trim underlying grass to avoid z-fighting.
+  const clippedIndices = [],
+    bounds = CITY.campus;
+  for (let i = 0; i < indices.length; i += 3) {
+    const triangle = indices
+      .slice(i, i + 3)
+      .map((index) => ({
+        x: positions[index * 3],
+        y: positions[index * 3 + 1],
+        z: positions[index * 3 + 2],
+        color: colors.slice(index * 3, index * 3 + 3),
+      }));
+    const pieces = clipExcavationTriangle(triangle, bounds);
+    if (pieces.length === 1 && pieces[0] === triangle) {
+      clippedIndices.push(...indices.slice(i, i + 3));
+      continue;
+    }
+    for (const polygon of pieces) {
+      const start = positions.length / 3;
+      for (const p of polygon) {
+        positions.push(p.x, p.y, p.z);
+        colors.push(...p.color);
+      }
+      for (let j = 1; j < polygon.length - 1; j++) clippedIndices.push(start, start + j, start + j + 1);
+    }
+  }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  geometry.setIndex(indices);
+  geometry.setIndex(clippedIndices);
   geometry.computeVertexNormals();
-  const terrain = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }));
+  const terrain = new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }),
+  );
   terrain.name = 'Continuous irregular basin and enclosing mountain range';
   terrain.receiveShadow = true;
   scene.add(terrain);
@@ -59,7 +95,8 @@ export function createLandscape(scene) {
 
 export function createSky(scene) {
   const canvas = document.createElement('canvas');
-  canvas.width = 32; canvas.height = 512;
+  canvas.width = 32;
+  canvas.height = 512;
   const context = canvas.getContext('2d');
   const texture = new THREE.CanvasTexture(canvas);
   texture.mapping = THREE.EquirectangularReflectionMapping;

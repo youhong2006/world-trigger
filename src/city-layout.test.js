@@ -46,7 +46,7 @@ test('base retains the fivefold footprint and the requested 350 metre roof heigh
   for (const x of [-BASE.width * BASE.scale / 2, BASE.width * BASE.scale / 2]) {
     for (const z of [BASE.z - BASE.depth * BASE.scale / 2, BASE.z + BASE.depth * BASE.scale / 2]) assert.equal(inCampus(x, z), true);
   }
-  assert.equal(groundHeight(BASE.x, BASE.z), 17.6);
+  assert.equal(groundHeight(BASE.x, BASE.z), 0);
 });
 
 test('the south perimeter and base walking spawn remain clear of the river', () => {

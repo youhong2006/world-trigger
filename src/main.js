@@ -29,6 +29,7 @@ try {
   };
 }
 
+import { createHQRange } from './hq-range.js';
 import { createHQInterior } from './hq-interior.js';
 import { createHQController } from './hq-ui.js';
 import { createHQTraining } from './hq-training.js';
@@ -177,6 +178,7 @@ const headquarters = createHeadquarters({
   cylinder: (x, y, z, r, h, color, n) => cylinder(x, y, z, r, h, color, n, baseGroup),
 });
 const hqInterior = createHQInterior({ scene, collision: worldCollision });
+const hqRange = createHQRange({ scene, collision: worldCollision, storage, notify });
 const hqWorldObjects = scene.children.filter((o) => !o.isLight);
 const residentialZ = Math.round((riverZ(-1008) + 200 - 72) / 144) * 144 + 72;
 const destinations = [
@@ -189,7 +191,7 @@ const destinations = [
   },
   {
     name: 'BORDER 本部',
-    pos: new THREE.Vector3(0, groundHeight(0, 302) + PERSON.eyeHeight, 302),
+    pos: new THREE.Vector3(0, groundHeight(0, 278) + PERSON.eyeHeight, 278),
     yaw: 0,
     pitch: 0.08,
     previewPosition: new THREE.Vector3(1350, 2800, 1350),
@@ -313,7 +315,7 @@ const melee = createMeleeCombat({
     if (type === 'swing') rangeStrikeHits.clear();
     if (type === 'strike') {
       battle.strike(detail, playerBattleState());
-      if (hqTraining?.active || range.snapshot.phase === 'active')
+      if (hqTraining?.active || hqRange.active || range.snapshot.phase === 'active')
         for (const t of getTargets()) {
           const dx = t.position.x - position.x,
             dz = t.position.z - position.z,
@@ -327,6 +329,7 @@ const melee = createMeleeCombat({
           ) {
             rangeStrikeHits.add(t.id);
             if (hqTraining?.active) hqTraining.hit(t.id, detail.damage);
+            else if (hqRange.active) hqRange.hit(t.id, detail.damage);
             else range.hit(t.id, detail.damage);
           }
         }
@@ -369,6 +372,7 @@ const battle = createBattleSession({
 });
 function getTargets() {
   if (hqTraining?.active) return hqTraining.targets;
+  if (battle.phase === 'idle' && hqRange.active) return hqRange.targets;
   return battle.phase === 'idle' ? range.targets : battle.targets;
 }
 function playerBattleState() {
@@ -521,6 +525,7 @@ const shooting = createShootingSystem({
     weaponRevision++;
     if (type === 'shot') {
       hqTraining?.recordShot();
+      hqRange.recordShot();
       range.recordShot();
       battle.recordShot();
     }
@@ -532,6 +537,7 @@ const shooting = createShootingSystem({
   },
   onHit(id, damage, point, bullet) {
     if (hqTraining?.active) hqTraining.hit(id, damage);
+    else if (hqRange.active && id.startsWith('LIVE-')) hqRange.hit(id, damage);
     else if (battle.phase !== 'idle') battle.hit(id, damage, point, bullet);
     else range.hit(id, damage);
   },
@@ -991,6 +997,7 @@ function resume() {
   syncPlayerHud(true);
 }
 function enter() {
+  hqRange.reset();
   hqTraining?.stop();
   hqController?.reset();
   if (ui.isOpen) ui.close();
@@ -1216,6 +1223,11 @@ hqController = createHQController({
       )
       .join('\n'),
   getTrainingRecord: () => hqTraining.snapshot.best,
+  getRangeStatus: () => hqRange.snapshot,
+  onResetRange() {
+    hqRange.reset();
+    notify('已重置實體射擊場靶位');
+  },
   getInventory: () =>
     `目前配裝：${armory.profile.name}\n主槽：${armory.profile.main.map((id) => TRIGGERS[id]?.name ?? id).join('、')}\n副槽：${armory.profile.sub.map((id) => TRIGGERS[id]?.name ?? id).join('、')}`,
 });
@@ -1694,6 +1706,7 @@ renderer.setAnimationLoop((now) => {
       if (endedChallenge()) break;
       hqController?.update(dt, true, !!hqTraining?.active);
       hqTraining?.update(dt);
+      hqRange.update(dt, motor.position, !hqTraining?.active && battle.phase === 'idle');
       combat.update(dt);
       range.update(dt);
       melee.update(dt, { blade: !!bladeSide(), shield: activeTrigger('shield'), grounded: motor.grounded });
@@ -1831,7 +1844,10 @@ renderer.setAnimationLoop((now) => {
     fpsTime = now;
     document.querySelector('#fps-display').textContent = `FPS ${fps}`;
   }
-  if (!exploring) hqController?.update(0, false);
+  if (!exploring) {
+    hqController?.update(0, false);
+    hqRange.update(0, camera.position, false);
+  }
   city.architecture.update(camera, settings.detailDistance);
   renderer.render(hqTraining?.active ? hqTraining.scene : scene, camera);
   renderRequested = false;
@@ -1897,6 +1913,7 @@ window.__mikado = {
       headquarters: {
         ...hqController?.snapshot,
         simulation: hqTraining?.snapshot,
+        liveRange: hqRange.snapshot,
         name: headquarters.name,
         enlargement: BASE.enlargement,
         openRoof: headquarters.openRoof,

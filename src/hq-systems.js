@@ -38,13 +38,15 @@ export function createDoorSystem(doors) {
   }
   function update(dt, p, liftY, liftMoving) {
     for (const d of doors) {
-      const near =
-        Math.abs(p.x - d.x) < d.w / 2 + 0.65 && Math.abs(p.z - d.z) < 2.8 && Math.abs(p.y - d.y) < 2.7;
+      const axis = d.leafAxis ?? { x: 1, z: 0 },
+        normal = { x: -axis.z, z: axis.x };
+      const dx = p.x - d.x,
+        dz = p.z - d.z,
+        u = dx * axis.x + dz * axis.z,
+        v = dx * normal.x + dz * normal.z;
+      const near = Math.abs(u) < d.w / 2 + 0.65 && Math.abs(v) < 2.8 && Math.abs(p.y - d.y) < 2.7;
       const threshold =
-        Math.abs(p.x - d.x) < d.w / 2 + 0.4 &&
-        Math.abs(p.z - d.z) < 0.8 &&
-        p.y < d.y + d.h &&
-        p.y + 1.75 > d.y;
+        Math.abs(u) < d.w / 2 + 0.4 && Math.abs(v) < 0.8 && p.y < d.y + d.h && p.y + 1.75 > d.y;
       if (d.kind === 'lift') d.access = !liftMoving && Math.abs(liftY - d.y) < 0.02;
       if (d.automatic && near && d.access) d.hold = 1.8;
       if (threshold && d.access) d.hold = Math.max(d.hold, 0.3);
@@ -54,10 +56,14 @@ export function createDoorSystem(doors) {
       d.progress = clamp(d.progress + (want ? 1 : -1) * dt * 3.3, 0, 1);
       for (let i = 0; i < 2; i++) {
         const side = i ? 1 : -1,
-          x = d.x + side * (d.w / 4 + d.progress * d.w * 0.53);
+          offset = side * (d.w / 4 + d.progress * d.w * 0.53);
+        const x = d.x + axis.x * offset,
+          z = d.z + axis.z * offset;
         d.meshes[i].position.x = x;
+        d.meshes[i].position.z = z;
         if (d.solids) {
           d.solids[i].x = x;
+          d.solids[i].z = z;
           d.solids[i].enabled = true;
         }
       }

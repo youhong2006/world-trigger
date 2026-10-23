@@ -7,9 +7,11 @@ export const BASE = {
   z: -150,
   width: 78,
   depth: 50,
-  height: (350 - 1.1 * 16) / 16, // Main roof is 350 m above the city datum; crowns/antennae are additional.
-  wallThickness: 4.2,
-  floorHeight: 1.1,
+  height: 350 / 16, // Main roof is 350 m above the city datum; crowns/antennae are additional.
+  wallThickness: 10, // 160 m occupied perimeter wings.
+  storeyHeight: 6,
+  basementDepth: 12,
+  floorHeight: 0,
 };
 export const CITY = {
   halfSize: 3700,
@@ -198,20 +200,15 @@ export function pavedSurfaceOffset(x, z) {
 export function groundHeight(x, z) {
   const bridge = bridgeSurfaceHeight(x, z);
   if (bridge !== null) return bridge;
-  if (Math.abs(x) < 5 && z >= 251 && z < 310) {
-    const t = (310 - z) / 59;
-    return terrainHeight(x, 310) * (1 - t) + BASE.floorHeight * BASE.scale * t;
-  }
-  if (Math.abs(x) < 64 && z > 182 && z < 251) return BASE.floorHeight * BASE.scale - 8;
-  if (
-    Math.abs(x - BASE.x) < (BASE.width * BASE.scale) / 2 + 1.5 * BASE.scale &&
-    Math.abs(z - BASE.z) < (BASE.depth * BASE.scale) / 2 + 1.5 * BASE.scale
-  )
-    return BASE.floorHeight * BASE.scale;
-  // Excavated occupied wing: actual slabs/stairs determine support, including B2/B1.
-  // This matches the cut-out in headquarters.js; no terrain plane through basement rooms.
-  // (Checked before the base's exterior platform below.)
-  // Count paved surfaces and the lookout platform when setting the person's eye height.
+  const halfW = (BASE.width * BASE.scale) / 2,
+    halfD = (BASE.depth * BASE.scale) / 2;
+  const dx = Math.abs(x - BASE.x),
+    dz = Math.abs(z - BASE.z),
+    wing = BASE.wallThickness * BASE.scale;
+  // Basement excavation covers all four perimeter wings; real floor slabs provide support.
+  if (dx < halfW && dz < halfD) return dx >= halfW - wing || dz >= halfD - wing ? -BASE.basementDepth : 0;
+  // Flush entrance apron: no ramp or raised stone platform.
+  if ((dx < halfW + 24 && dz < halfD + 24) || (Math.abs(x) < 80 && z >= 250 && z < 330)) return 0;
   const lookout = CITY.lookout;
   if (Math.abs(x - lookout.x) < 12.5 && Math.abs(z - lookout.z) < 7)
     return terrainHeight(lookout.x, lookout.z) + 0.25;
@@ -266,6 +263,8 @@ export function createCollisionIndex() {
       enabled,
       traceOnly,
       keys: [],
+      heightKeys: [],
+      removed: false,
       dynamic: !Number.isFinite(y) || !Number.isFinite(h) || h > 32,
     };
     for (let gx = Math.floor((x - bounds.w) / cellSize); gx <= Math.floor((x + bounds.w) / cellSize); gx++) {
@@ -286,6 +285,7 @@ export function createCollisionIndex() {
             const hk = key + ',' + gy;
             if (!heightBins.has(hk)) heightBins.set(hk, []);
             heightBins.get(hk).push(bounds);
+            bounds.heightKeys.push(hk);
           }
       }
     }
@@ -294,6 +294,7 @@ export function createCollisionIndex() {
   }
   // Moving doors remain inside their original broad-phase bounds; elevator moves vertically.
   function setHeight(bounds, y, h) {
+    if (bounds.removed) return;
     if (!bounds.dynamic) {
       bounds.dynamic = true;
       for (const key of bounds.keys) {
@@ -303,6 +304,29 @@ export function createCollisionIndex() {
     }
     bounds.bottom = y;
     bounds.top = y + h;
+  }
+
+  // Streaming frees every spatial reference; disabled old rooms do not accumulate forever.
+  function remove(bounds) {
+    if (!bounds || bounds.removed) return false;
+    bounds.enabled = false;
+    bounds.removed = true;
+    count--;
+    const erase = (map, key) => {
+      const list = map.get(key);
+      if (!list) return;
+      const i = list.indexOf(bounds);
+      if (i >= 0) list.splice(i, 1);
+      if (!list.length) map.delete(key);
+    };
+    for (const key of bounds.keys) {
+      erase(bins, key);
+      erase(tallBins, key);
+    }
+    for (const key of bounds.heightKeys) erase(heightBins, key);
+    bounds.keys = [];
+    bounds.heightKeys = [];
+    return true;
   }
 
   function hasObstacle(x, z) {
@@ -396,6 +420,7 @@ export function createCollisionIndex() {
   }
   function surfaceHeightAt(x, z, feetY, maxStep = 0.38) {
     let surface = groundHeight(x, z);
+    if (!Number.isFinite(feetY)) return surface;
     const supportRadius = 0.28;
     // Descend six-metre buckets and stop once a supporting surface has been found.
     // Hundreds of stacked stair flights therefore cost the same as a normal room.
@@ -524,6 +549,7 @@ export function createCollisionIndex() {
   }
   return {
     add,
+    remove,
     setHeight,
     blocked,
     blockedAt,

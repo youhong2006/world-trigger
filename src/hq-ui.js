@@ -1,5 +1,54 @@
-import { HQ, HQ_STOPS, floorAt } from './hq-layout.js';
+import * as Layout from './hq-layout.js';
 import { selectInteractable, createDoorSystem, createLiftSystem } from './hq-systems.js';
+import {
+  WING_LABELS,
+  wingName,
+  wingIdAt,
+  floorFamily,
+  floorEnvelope,
+  roomsOnFloor,
+  roomPoint,
+  routeStep,
+  resetRoute,
+} from './hq-wayfinding.js';
+import './hq-ui.css';
+
+const { HQ, HQ_STOPS, floorAt } = Layout;
+const WINGS = ['front', 'right', 'back', 'left'];
+const create = (tag, className, text) => {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+};
+function groupedOptions(select, stops) {
+  select.replaceChildren();
+  const groups = new Map();
+  for (const floor of stops) {
+    const key = floor.zone ?? floorFamily(floor);
+    if (!groups.has(key)) {
+      const group = create('optgroup');
+      group.label = key;
+      groups.set(key, group);
+      select.append(group);
+    }
+    const option = create('option', '', `${floor.id}　${floor.name}`);
+    option.value = floor.id;
+    groups.get(key).append(option);
+  }
+}
+function field(label, element) {
+  const wrapper = create('label', '', label);
+  wrapper.append(element);
+  return wrapper;
+}
+function rangeDestination() {
+  const r = Layout.HQ_RANGE;
+  const point = Layout.wingPoint
+    ? Layout.wingPoint('front', r.y, -144, r.boothV)
+    : { x: -140, y: r.y, z: 216.4 - (32 * r.y) / 350 + 23 };
+  return { ...point, floor: r.floor, name: '大型射擊訓練場', wing: 'front' };
+}
 
 export function createHQController({
   interior,
@@ -15,138 +64,429 @@ export function createHQController({
   getMedical,
   getInventory,
   getTrainingRecord = () => 0,
+  getRangeStatus = () => null,
+  onResetRange,
 }) {
-  const prompt = document.createElement('div');
+  const prompt = create('div');
   prompt.id = 'hq-prompt';
   prompt.hidden = true;
   prompt.setAttribute('role', 'status');
-  document.body.append(prompt);
-  const panel = document.createElement('dialog');
+  const panel = create('dialog');
   panel.id = 'hq-panel';
   panel.innerHTML =
     '<form method="dialog"><span class="eyebrow">BORDER / FACILITY TERMINAL</span><button class="hq-close" aria-label="關閉">×</button><h2></h2><div class="hq-content"></div></form>';
-  document.body.append(panel);
-  const breadcrumb = document.createElement('div');
+  const breadcrumb = create('div');
   breadcrumb.id = 'hq-location';
   breadcrumb.hidden = true;
-  document.body.append(breadcrumb);
-  const doorSystem = createDoorSystem(interior.doors),
-    lift = createLiftSystem(interior.lift, interior.liftDoors, collision);
+  const waypointHud = create('div');
+  waypointHud.id = 'hq-waypoint';
+  waypointHud.hidden = true;
+  const rangeHud = create('div');
+  rangeHud.id = 'hq-range-readout';
+  rangeHud.hidden = true;
+  document.body.append(prompt, panel, breadcrumb, waypointHud, rangeHud);
+  const doorSystem = createDoorSystem(interior.doors);
+  const lift = createLiftSystem(interior.lift, interior.liftDoors, collision);
   let target = null,
     seated = null,
     exitPoint = null,
     active = false,
     pose = null,
     food = 0,
-    drinks = 0;
-  const holograms = [];
+    drinks = 0,
+    waypoint = null;
+  let nextHud = 0;
+
   function close(restore = true) {
     if (!panel.open) return;
     panel.close();
     if (restore) onClose();
   }
-  panel.addEventListener('cancel', (e) => {
-    e.preventDefault();
+  panel.addEventListener('cancel', (event) => {
+    event.preventDefault();
     close();
   });
-  panel.querySelector('form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    close();
+  panel.querySelector('form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (event.submitter?.classList.contains('hq-close')) close();
   });
-  function show(title, body, actions = []) {
+  function show(title, body, actions = [], navigation = false) {
     onOpen();
+    panel.classList.toggle('hq-navigation', navigation);
     panel.querySelector('h2').textContent = title;
     const content = panel.querySelector('.hq-content');
     content.replaceChildren();
-    const text = document.createElement('p');
-    text.textContent = body;
-    content.append(text);
-    const buttons = document.createElement('div');
-    buttons.className = 'hq-actions';
-    for (const [label, callback] of actions) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = label;
-      b.onclick = callback;
-      buttons.append(b);
+    if (body) content.append(create('p', '', body));
+    if (actions.length) {
+      const buttons = create('div', 'hq-actions');
+      for (const [label, callback] of actions) {
+        const button = create('button', '', label);
+        button.type = 'button';
+        button.onclick = callback;
+        buttons.append(button);
+      }
+      content.append(buttons);
     }
-    content.append(buttons);
-    panel.showModal();
+    if (!panel.open) panel.showModal();
     panel.querySelector('.hq-close').focus();
+    return content;
   }
   function safeExit() {
     if (!seated) return true;
     const candidates = [...(seated.exits ?? []), exitPoint].filter(Boolean);
-    for (const p of candidates)
-      if (collision.canOccupy(p.x, p.z, p.y, 1.75, 0.3)) {
-        motor.teleport(p, getView().yaw);
-        seated = null;
-        pose = null;
-        notify('已站起');
-        return true;
-      }
-    notify('出口受阻，請先移開附近物品再站起');
+    for (const point of candidates) {
+      if (!collision.canOccupy(point.x, point.z, point.y, 1.75, 0.3)) continue;
+      motor.teleport(point, getView().yaw);
+      seated = null;
+      pose = null;
+      notify('已站起');
+      return true;
+    }
+    notify('出口受阻，請先清出座位旁的通道再站起');
     return false;
   }
-  function sit(o) {
-    if (!motor.grounded || Math.abs(motor.position.y - o.seat.y) > 0.25) {
+  function sit(object) {
+    if (!object.seat || !motor.grounded || Math.abs(motor.position.y - object.seat.y) > 0.25) {
       notify('請先站到座位旁的地面');
       return;
     }
     exitPoint = { ...motor.position };
-    seated = o;
-    pose = o.type === 'bed' ? 'rest' : 'sit';
-    motor.teleport({ ...o.seat }, o.yaw ?? 0);
+    seated = object;
+    pose = object.type === 'bed' ? 'rest' : 'sit';
+    motor.teleport({ ...object.seat }, object.yaw ?? 0);
     motor.velocity.x = motor.velocity.y = motor.velocity.z = 0;
-    notify(`${o.type === 'bed' ? '休息中' : '已坐下'} · ${getKey()} 站起`);
+    notify(`${object.type === 'bed' ? '休息中' : '已坐下'} · ${getKey()} 站起`);
+  }
+  function mark(destination) {
+    resetRoute();
+    waypoint = { ...destination };
+    close();
+    notify(`已標記 ${destination.floor ?? floorAt(destination.y).id} ${destination.name} · 跟隨導覽提示前往`);
+  }
+  function drawMap(svg, floor, selectedWing, rooms) {
+    svg.replaceChildren();
+    const ns = 'http://www.w3.org/2000/svg';
+    const add = (tag, attrs, text) => {
+      const el = document.createElementNS(ns, tag);
+      for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
+      if (text !== undefined) el.textContent = text;
+      svg.append(el);
+      return el;
+    };
+    const e = floorEnvelope(floor.y),
+      scale = Math.min(570 / (e.halfW * 2), 330 / (e.halfD * 2));
+    const project = (x, z) => [310 + x * scale, 195 + (z + 150) * scale];
+    const rect = (x, z, w, d, attrs) => {
+      const [px, py] = project(x - w / 2, z - d / 2);
+      return add('rect', { x: px, y: py, width: w * scale, height: d * scale, ...attrs });
+    };
+    rect(0, -150, e.halfW * 2, e.halfD * 2, { fill: '#416779', stroke: '#6da8b8', 'stroke-width': 2 });
+    rect(0, -150, (e.halfW - e.wingDepth) * 2, (e.halfD - e.wingDepth) * 2, {
+      fill: '#102e3c',
+      stroke: '#345c6f',
+    });
+    const strips = {
+      front: [0, -150 + e.halfD - e.wingDepth / 2, e.halfW * 2, e.wingDepth],
+      back: [0, -150 - e.halfD + e.wingDepth / 2, e.halfW * 2, e.wingDepth],
+      right: [e.halfW - e.wingDepth / 2, -150, e.wingDepth, (e.halfD - e.wingDepth) * 2],
+      left: [-e.halfW + e.wingDepth / 2, -150, e.wingDepth, (e.halfD - e.wingDepth) * 2],
+    };
+    for (const wing of WINGS) {
+      const r = rect(...strips[wing], {
+        fill: selectedWing === wing ? '#49b7c4' : '#386174',
+        stroke: '#739bad',
+        'stroke-width': 0.8,
+        tabindex: 0,
+        role: 'button',
+        'aria-label': wingName(wing),
+      });
+      r.style.cursor = 'pointer';
+      r.addEventListener('click', () => {
+        svg.dispatchEvent(new CustomEvent('wingselect', { detail: wing }));
+      });
+      r.addEventListener('keydown', (event) => {
+        if (event.code === 'Enter' || event.code === 'Space') {
+          event.preventDefault();
+          svg.dispatchEvent(new CustomEvent('wingselect', { detail: wing }));
+        }
+      });
+    }
+    const range = Layout.HQ_RANGE;
+    if (range && floor.y >= range.y && floor.y < range.top) {
+      const a = Layout.wingPoint(
+        'front',
+        floor.y,
+        (range.minU + range.maxU) / 2,
+        (range.vMin + range.vMax) / 2,
+      );
+      rect(a.x, a.z, range.maxU - range.minU, range.vMax - range.vMin, { fill: '#e5a0ac', opacity: 0.85 });
+    }
+    const mapRooms = WINGS.flatMap((wing) => rooms.filter((room) => room.wing === wing).slice(0, 48));
+    for (const room of mapRooms) {
+      const point = room.point ?? roomPoint(room);
+      const [cx, cy] = project(point.x, point.z);
+      add('circle', { cx, cy, r: 1.7, fill: '#c0e8ed', opacity: 0.65 });
+    }
+    const [lx, ly] = project(HQ.lift.x, HQ.lift.z);
+    add('rect', { x: lx - 4, y: ly - 4, width: 8, height: 8, fill: '#72eaf0', stroke: '#0b2f3c' });
+    add('text', { x: 310, y: 192, fill: '#9bc0ce', 'text-anchor': 'middle', 'font-size': 15 }, '中央中庭');
+    add(
+      'text',
+      { x: 310, y: 217, fill: '#769ead', 'text-anchor': 'middle', 'font-size': 11 },
+      `${floor.id} / ${floor.name}`,
+    );
+    add('text', { x: 310, y: 21, fill: '#b5dce5', 'text-anchor': 'middle', 'font-size': 12 }, '北側翼');
+    add(
+      'text',
+      { x: 310, y: 385, fill: '#b5dce5', 'text-anchor': 'middle', 'font-size': 12 },
+      '南側・正面入口',
+    );
+    if (Math.abs(motor.position.y - floor.y) < 2.5) {
+      const [cx, cy] = project(motor.position.x, motor.position.z);
+      add('circle', { cx, cy, r: 5, fill: '#ffd38c', stroke: '#182f3c', 'stroke-width': 2 });
+    }
+    if (waypoint && Math.abs(waypoint.y - floor.y) < 2.5) {
+      const [cx, cy] = project(waypoint.x, waypoint.z);
+      add('path', {
+        d: `M ${cx} ${cy - 7} L ${cx + 6} ${cy} L ${cx} ${cy + 7} L ${cx - 6} ${cy} Z`,
+        fill: '#f1f9c9',
+        stroke: '#a7d161',
+      });
+    }
   }
   function directory() {
-    show(
-      '基地導覽',
-      '主設施翼位於基地南側。每層由中央走廊連接房間，東側樓梯與電梯通往所有開放樓層及頂樓。樓層與尺寸為遊戲原創配置（C）。\n' +
-        HQ_STOPS.map((f) => `${f.id}　${f.name}`).join('\n'),
+    const current = floorAt(motor.position.y);
+    const content = show(
+      '基地樓層與區域導覽',
+      '四側設施翼由環形走廊相連。選擇樓層、區域或房間後，可在場景中標記步行路線。',
+      [],
+      true,
+    );
+    const controls = create('div', 'hq-form-row');
+    const floorSelect = create('select');
+    floorSelect.setAttribute('aria-label', '導覽樓層');
+    groupedOptions(floorSelect, HQ_STOPS);
+    floorSelect.value = current.id;
+    const wingSelect = create('select');
+    wingSelect.setAttribute('aria-label', '導覽區域');
+    for (const [value, label] of [['all', '四側全部'], ...WINGS.map((wing) => [wing, wingName(wing)])]) {
+      const option = create('option', '', label);
+      option.value = value;
+      wingSelect.append(option);
+    }
+    const search = create('input');
+    search.type = 'search';
+    search.placeholder = '搜尋本層房間、會議室、宿舍…';
+    search.setAttribute('aria-label', '搜尋房間');
+    controls.append(field('樓層', floorSelect), field('設施翼', wingSelect), field('房間搜尋', search));
+    const grid = create('div', 'hq-directory'),
+      mapFrame = create('div', 'hq-map-frame');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('hq-floor-map');
+    svg.setAttribute('viewBox', '0 0 620 400');
+    svg.setAttribute('aria-label', '基地樓層平面圖');
+    svg.setAttribute('role', 'img');
+    const legend = create('div', 'hq-map-legend');
+    legend.append(
+      create('span', '', '電梯／樓梯'),
+      create('span', 'range', '大型射擊訓練場'),
+      create('span', 'player', '目前位置'),
+    );
+    mapFrame.append(svg, legend);
+    const listColumn = create('div'),
+      summary = create('p', 'hq-map-note'),
+      list = create('div', 'hq-room-list');
+    listColumn.append(summary, list);
+    grid.append(mapFrame, listColumn);
+    const quick = create('div', 'hq-actions');
+    const rangeButton = create('button', '', '標記 7F 大型射擊訓練場');
+    rangeButton.type = 'button';
+    rangeButton.onclick = () => mark(rangeDestination());
+    const liftButton = create('button', '', '標記本層主電梯');
+    liftButton.type = 'button';
+    liftButton.onclick = () =>
+      mark({
+        x: HQ.lift.x,
+        y: current.y,
+        z: HQ.lift.z + 7,
+        floor: current.id,
+        wing: 'front',
+        name: '主電梯與維修樓梯',
+      });
+    const clearButton = create('button', '', '清除場景標記');
+    clearButton.type = 'button';
+    clearButton.onclick = () => {
+      waypoint = null;
+      resetRoute();
+      redraw();
+      notify('已清除導覽標記');
+    };
+    quick.append(rangeButton, liftButton, clearButton);
+    content.append(
+      controls,
+      grid,
+      quick,
+      create(
+        'p',
+        'hq-map-note',
+        '設施種類參考作品；完整樓層、尺寸及房間位置為本作配置。粉紅色長帶為實體射擊訓練場。',
+      ),
+    );
+    function redraw() {
+      const floor = HQ_STOPS.find((f) => f.id === floorSelect.value) ?? current;
+      const allRooms = roomsOnFloor(floor.id);
+      const query = search.value.trim().toLowerCase();
+      const rooms = allRooms.filter(
+        (room) =>
+          (wingSelect.value === 'all' || room.wing === wingSelect.value) &&
+          (!query || `${room.name} ${room.id}`.toLowerCase().includes(query)),
+      );
+      drawMap(svg, floor, wingSelect.value, allRooms);
+      summary.textContent = `${floor.id} ${floor.name} · ${rooms.length} 間房室${rooms.length > 70 ? '（先顯示 70 間）' : ''}`;
+      list.replaceChildren();
+      if (!rooms.length)
+        list.append(
+          create(
+            'p',
+            'hq-map-note',
+            floor.id === 'RF'
+              ? '頂樓為通訊設備、屋頂步道及服務核心。'
+              : '本區為大型開放設施、通道或觀察迴廊。可由粉紅色區域及電梯標示辨識動線。',
+          ),
+        );
+      for (const room of rooms.slice(0, 70)) {
+        const button = create('button');
+        button.type = 'button';
+        button.append(create('span', '', room.name), create('small', '', wingName(room.wing)));
+        button.onclick = () =>
+          mark({ ...room.point, name: room.name, floor: floor.id, wing: room.wing, roomId: room.id });
+        list.append(button);
+      }
+    }
+    floorSelect.onchange = redraw;
+    wingSelect.onchange = redraw;
+    search.oninput = redraw;
+    svg.addEventListener('wingselect', (event) => {
+      wingSelect.value = event.detail;
+      redraw();
+    });
+    redraw();
+  }
+  function elevator() {
+    const content = show(
+      '電梯樓層選擇',
+      `目前 ${floorAt(lift.snapshot.y).id} · 高度 ${lift.snapshot.y.toFixed(1)} m。先進入轎廂，再選擇目的樓層。`,
+      [],
+      true,
+    );
+    const quick = create('div', 'hq-quick-floors');
+    const select = create('select');
+    select.setAttribute('aria-label', '目的樓層');
+    groupedOptions(select, HQ_STOPS);
+    select.value = floorAt(lift.snapshot.y).id;
+    const quickStops = HQ_STOPS.filter(
+      (floor, index, all) =>
+        index === 0 ||
+        floor.id === '1F' ||
+        floor.id === '2F' ||
+        floor.id === '7F' ||
+        floor.id === 'RF' ||
+        floor.zone !== all[index - 1]?.zone,
+    );
+    for (const { id } of quickStops) {
+      const floor = HQ_STOPS.find((f) => f.id === id);
+      if (!floor) continue;
+      const button = create('button', '', id);
+      button.type = 'button';
+      button.title = floor.name;
+      button.onclick = () => {
+        select.value = id;
+        refresh();
+      };
+      quick.append(button);
+    }
+    const search = create('input');
+    search.type = 'search';
+    search.placeholder = '樓層或設施名稱';
+    search.setAttribute('aria-label', '篩選電梯樓層');
+    const row = create('div', 'hq-form-row');
+    row.append(field('搜尋樓層', search), field('目的樓層', select));
+    const selected = create('p', 'hq-lift-selected'),
+      detail = create('p', 'hq-map-note'),
+      actions = create('div', 'hq-actions');
+    const travel = create('button', '', '前往選定樓層');
+    travel.type = 'button';
+    travel.onclick = () => {
+      const floor = HQ_STOPS.find((f) => f.id === select.value);
+      if (!floor) return;
+      if (!lift.request(floor.id)) {
+        notify('電梯運行中，請等候到站');
+        return;
+      }
+      close();
+      notify(`前往 ${floor.id} ${floor.name} · 請站在轎廂內`);
+    };
+    actions.append(travel);
+    content.append(quick, row, selected, detail, actions);
+    function refresh() {
+      const floor = HQ_STOPS.find((f) => f.id === select.value);
+      selected.textContent = floor ? `${floor.id}　${floor.name}` : '沒有相符樓層';
+      detail.textContent = floor
+        ? `${floor.zone ?? floorFamily(floor)} · 高度 ${floor.y.toFixed(0)} m`
+        : '請改用其他樓層編號或設施名稱搜尋';
+      travel.disabled = !floor;
+    }
+    search.oninput = () => {
+      const value = search.value.trim().toLowerCase(),
+        previous = select.value;
+      const matches = HQ_STOPS.filter(
+        (f) => !value || `${f.id} ${f.name} ${f.zone ?? ''}`.toLowerCase().includes(value),
+      );
+      groupedOptions(select, matches);
+      if (matches.some((f) => f.id === previous)) select.value = previous;
+      refresh();
+    };
+    select.onchange = refresh;
+    refresh();
+  }
+  function rangeText() {
+    const status = getRangeStatus();
+    if (!status)
+      return '7F 正面翼為大型實體射擊訓練場。沿長帶排列的射擊隔間朝向靶區；各層觀察通道連接維護區。';
+    if (typeof status === 'string') return status;
+    return (
+      status.summary ??
+      `實體靶場 · 擊破 ${status.cleared ?? status.destroyed ?? 0} / ${status.total ?? status.targets?.length ?? '—'} 靶 · 命中 ${status.hits ?? 0} 次`
     );
   }
-  function use(o) {
-    if (o.type === 'door') {
-      if (!doorSystem.activate(o.door))
-        notify(o.door.kind === 'lift' ? '電梯尚未到站，請使用呼叫面板' : '門禁管制');
+  function use(object) {
+    if (object.type === 'door') {
+      if (!doorSystem.activate(object.door))
+        notify(object.door.kind === 'lift' ? '電梯尚未到站，請使用呼叫面板' : '門禁管制');
       return;
     }
-    if (o.type === 'seat' || o.type === 'bed') {
-      sit(o);
+    if (object.type === 'seat' || object.type === 'bed') {
+      sit(object);
       return;
     }
-    if (o.kind === 'liftCall') {
-      notify(lift.request(o.text) ? '電梯呼叫已送出 · 到站後雙扇門會開啟' : '電梯運行中，請到站後再呼叫');
-      return;
-    }
-    if (o.kind === 'lift') {
-      show(
-        '電梯樓層選擇',
-        `目前高度 ${lift.snapshot.y.toFixed(1)} m · 最高 RF ${HQ.roof.toFixed(0)} m`,
-        HQ_STOPS.map((f) => [
-          `${f.id}　${f.name}`,
-          () => {
-            if (!lift.request(f.id)) {
-              notify('電梯運行中，請等候到站');
-              return;
-            }
-            close();
-            notify(`前往 ${f.id} · 請站在轎廂內`);
-          },
-        ]),
+    if (object.kind === 'liftCall') {
+      notify(
+        lift.request(object.text) ? '電梯呼叫已送出 · 到站後雙扇門會開啟' : '電梯運行中，請到站後再呼叫',
       );
       return;
     }
-    if (o.kind === 'loadout' || o.kind === 'missions') {
-      onConsole(o.kind === 'loadout' ? 'loadout' : 'missions');
+    if (object.kind === 'lift') {
+      elevator();
       return;
     }
-    if (o.kind === 'training') {
+    if (object.kind === 'loadout' || object.kind === 'missions') {
+      onConsole(object.kind === 'loadout' ? 'loadout' : 'missions');
+      return;
+    }
+    if (object.kind === 'training') {
       show(
-        '虛擬訓練啟動',
-        `在模擬環境練習射擊、近戰與蚱蜢移動。擊破六個練習靶，按 F 返回基地終端。\n本機最佳：${getTrainingRecord()} 分`,
+        '訓練模式',
+        `虛擬訓練可練習射擊、近戰與蚱蜢移動。實體長條射擊場位於 7F 正面翼，可由基地走廊與電梯到達。\n本機虛擬訓練最佳：${getTrainingRecord()} 分`,
         [
           [
             '開始靜態靶訓練',
@@ -155,6 +495,7 @@ export function createHQController({
               onTraining();
             },
           ],
+          ['標記實體射擊訓練場', () => mark(rangeDestination())],
           [
             '裝備與保存',
             () => {
@@ -166,26 +507,49 @@ export function createHQController({
       );
       return;
     }
-    if (o.kind === 'directory') {
+    if (object.kind === 'range' || object.kind === 'rangeControl' || object.kind === 'shootingRange') {
+      const actions = [
+        [
+          '裝備與保存',
+          () => {
+            close(false);
+            onConsole('loadout');
+          },
+        ],
+        ['基地平面導覽', directory],
+      ];
+      if (onResetRange)
+        actions.unshift([
+          '重置實體靶標',
+          () => {
+            onResetRange();
+            notify('實體射擊場靶標已重置');
+            close();
+          },
+        ]);
+      show('大型射擊訓練場', rangeText(), actions);
+      return;
+    }
+    if (object.kind === 'directory') {
       directory();
       return;
     }
-    if (o.kind === 'medical') {
-      show(o.name, getMedical() + '\n少量恢復三離子不會修復斷肢。需緊急脫離或重試，才能重整戰鬥體。');
+    if (object.kind === 'medical') {
+      show(object.name, getMedical() + '\n少量恢復三離子不會修復斷肢。需緊急脫離或重試，才能重整戰鬥體。');
       return;
     }
-    if (o.kind === 'inventory') {
-      show(o.name, getInventory() + '\n物流箱與遠征艇目前是可探索場景，搬運與遠征任務尚未開放。');
+    if (object.kind === 'inventory') {
+      show(object.name, getInventory() + '\n物流箱與遠征艇目前用於整備與設施探索；遠征任務尚未開放。');
       return;
     }
-    if (o.kind === 'food' || o.kind === 'vending') {
+    if (object.kind === 'food' || object.kind === 'vending') {
       show(
-        o.name,
-        `${o.kind === 'food' ? '今日菜單：咖哩飯、拉麵、沙拉' : '飲品：礦泉水、茶、咖啡'}。補給為休閒互動，不額外修復戰鬥體。\n本次領取：餐點 ${food}、飲品 ${drinks}`,
-        (o.kind === 'food' ? ['咖哩飯', '拉麵', '沙拉'] : ['礦泉水', '茶', '咖啡']).map((item) => [
+        object.name,
+        `${object.kind === 'food' ? '今日菜單：咖哩飯、拉麵、沙拉' : '飲品：礦泉水、茶、咖啡'}。\n本次領取：餐點 ${food}、飲品 ${drinks}`,
+        (object.kind === 'food' ? ['咖哩飯', '拉麵', '沙拉'] : ['礦泉水', '茶', '咖啡']).map((item) => [
           item,
           () => {
-            if (o.kind === 'food') food++;
+            if (object.kind === 'food') food++;
             else drinks++;
             notify(`已領取${item}`);
             close();
@@ -194,8 +558,8 @@ export function createHQController({
       );
       return;
     }
-    if (o.kind === 'exercise') {
-      show(o.name, '移動訓練：衝刺、方向閃避、蹲下通行、跳躍與蚱蜢串聯。請在訓練空間練習高速動作。', [
+    if (object.kind === 'exercise') {
+      show(object.name, '動作訓練可練習衝刺、方向閃避、蹲下通行、跳躍與蚱蜢串聯。', [
         [
           '前往虛擬訓練',
           () => {
@@ -206,48 +570,100 @@ export function createHQController({
       ]);
       return;
     }
-    if (o.kind === 'radar') {
+    if (object.kind === 'radar') {
       show(
-        o.name,
-        `目前位置 X ${motor.position.x.toFixed(0)} / Z ${motor.position.z.toFixed(0)}，高度 ${motor.position.y.toFixed(1)} m。\nBORDER 基地位於城市中心。河流位於南側；城市外緣由山丘包圍。此為場景監控終端，並非即時敵情報告。`,
+        object.name,
+        `目前位置 X ${motor.position.x.toFixed(0)} / Z ${motor.position.z.toFixed(0)}，高度 ${motor.position.y.toFixed(1)} m。\nBORDER 基地位於三門市中央；南側為河流，城市外緣由山丘包圍。`,
+        [['開啟基地樓層導覽', directory]],
       );
       return;
     }
-    if (o.kind === 'hologram') {
-      const projection = interior.projections.find(
-        (p) => Math.abs(p.y - (o.y - 1)) < 0.1 && Math.abs(p.x - (o.x + 8)) < 0.1,
-      );
-      if (projection) projection.group.visible = !projection.group.visible;
-      const visible = !holograms.includes(o.id);
-      if (visible) holograms.push(o.id);
-      else holograms.splice(holograms.indexOf(o.id), 1);
-      notify(visible ? '戰術投影已開啟' : '戰術投影已收起');
+    if (object.kind === 'hologram') {
+      const projection =
+        object.projection ??
+        interior.projections?.find(
+          (p) =>
+            p.id === object.roomId ||
+            (Math.abs(p.y - (object.y - 1)) < 0.1 && Math.abs(p.x - (object.x + 8)) < 0.1),
+        );
+      const group = projection?.group ?? projection;
+      if (!group || typeof group.visible !== 'boolean') {
+        notify('投影設備尚未就緒');
+        return;
+      }
+      group.visible = !group.visible;
+      notify(group.visible ? '戰術投影已開啟' : '戰術投影已收起');
       return;
     }
-    if (o.kind === 'evacuation') {
+    if (object.kind === 'evacuation') {
       show(
-        o.name,
-        '沿走廊向東抵達維修樓梯，逐層下行至 1F，再向南通過接待大廳與主入口離開。火警為遊戲演練；安全出口保持通行。',
+        object.name,
+        '先沿環形走廊到達南側主服務核心，走維修樓梯下降至 1F；再沿正面中央大廳通過主入口離開。中庭的地面聯絡口亦可返回南翼。',
         [
           [
-            '啟動／結束演練提示',
-            () => {
-              notify('避難演練：東側樓梯 → 1F → 南側主入口');
-              close();
-            },
+            '標記安全出口',
+            () => mark({ x: 0, y: 0, z: 247.5, name: '正面安全出口', floor: '1F', wing: 'front' }),
           ],
         ],
       );
       return;
     }
-    if (o.kind === 'guide') {
+    if (object.kind === 'guide') {
       show(
-        o.name,
-        'WASD 移動 · Shift 衝刺 · Space 跳躍 · C 蹲下 · V 視角 · F 互動 · Z 切換射擊側 · Q 蚱蜢 · E 生成觸發器 · 右鍵分割 · 左鍵發射。\n設施類型參考動畫，完整樓層與連接動線為遊戲設計。',
+        object.name,
+        `WASD 移動 · Shift 衝刺 · Space 跳躍 · C 蹲下 · V 視角 · ${getKey()} 互動 · Z 切換射擊側 · Q 蚱蜢 · E 生成觸發器 · 右鍵分割 · 左鍵發射。\n四側設施翼由環形走廊相連，7F 正面翼為大型射擊訓練場。`,
+        [['開啟基地平面導覽', directory]],
       );
       return;
     }
-    show(o.name, o.text || 'BORDER 設施資訊。');
+    show(object.name, object.text || 'BORDER 設施資訊。');
+  }
+  function updateHud(dt) {
+    nextHud -= dt;
+    if (nextHud > 0) return;
+    nextHud = 0.1;
+    const inside =
+      active &&
+      (Layout.isHQInterior?.(motor.position.x, motor.position.y, motor.position.z) ??
+        (Math.abs(motor.position.x) < 624 && motor.position.z > -550 && motor.position.z < 250));
+    document.body.classList.toggle('hq-inside', inside);
+    breadcrumb.hidden = !inside;
+    if (inside) {
+      const floor = floorAt(motor.position.y),
+        wing = wingIdAt(motor.position);
+      breadcrumb.textContent = `BORDER / ${floor.id}　${wing === 'courtyard' ? '中央中庭' : wingName(wing)}　${floor.name}${lift.snapshot.moving ? '　｜ 電梯運行中' : ''}`;
+    }
+    waypointHud.hidden = !active || !waypoint || panel.open;
+    if (!waypointHud.hidden) {
+      const step = routeStep(motor.position, waypoint),
+        dx = step.point.x - motor.position.x,
+        dz = step.point.z - motor.position.z,
+        distance = Math.hypot(dx, dz);
+      const heading = Math.atan2(dx, -dz),
+        viewHeading = -getView().yaw;
+      const delta = Math.atan2(Math.sin(heading - viewHeading), Math.cos(heading - viewHeading));
+      const arrow = Math.abs(delta) < 0.35 ? '↑' : delta > 0 ? '→' : '←';
+      waypointHud.replaceChildren(
+        create('span', '', `${arrow} ${step.label} · ${distance.toFixed(0)} m`),
+        create('small', '', `${waypoint.floor ?? floorAt(waypoint.y).id}　${waypoint.name}`),
+      );
+      if (!step.vertical && Math.hypot(waypoint.x - motor.position.x, waypoint.z - motor.position.z) < 3) {
+        notify(`已抵達 ${waypoint.name}`);
+        waypoint = null;
+      }
+    }
+    const range = Layout.HQ_RANGE;
+    const inRange =
+      inside &&
+      range &&
+      wingIdAt(motor.position) === 'front' &&
+      motor.position.y >= range.y - 0.1 &&
+      motor.position.y < range.top &&
+      motor.position.x > range.minU - 3 &&
+      motor.position.x < range.maxU + 3 &&
+      Math.abs(motor.position.z - Layout.wingFrame('front', range.y).z) < HQ.wingDepth / 2;
+    rangeHud.hidden = !inRange || panel.open;
+    if (inRange) rangeHud.textContent = rangeText();
   }
   return {
     interact() {
@@ -256,7 +672,7 @@ export function createHQController({
         safeExit();
         return;
       }
-      if (target) use(target);
+      if (target && interior.objects.includes(target)) use(target);
     },
     escape() {
       if (panel.open) {
@@ -275,20 +691,20 @@ export function createHQController({
       seated = null;
       pose = null;
       target = null;
+      waypoint = null;
+      resetRoute();
       document.body.classList.remove('hq-inside');
-      prompt.hidden = true;
-      breadcrumb.hidden = true;
+      prompt.hidden = breadcrumb.hidden = waypointHud.hidden = rangeHud.hidden = true;
     },
     update(dt, exploring, simulation = false) {
       active = exploring && !simulation;
+      // Install nearby room collision and door records before physics/target work for this tick.
+      interior.updateVisibility(motor.position, active);
       if (active) {
         lift.update(dt, motor);
         doorSystem.update(dt, motor.position, lift.snapshot.y, lift.snapshot.moving);
       }
-      interior.updateVisibility(motor.position, active);
-      if (seated) {
-        motor.velocity.x = motor.velocity.y = motor.velocity.z = 0;
-      }
+      if (seated) motor.velocity.x = motor.velocity.y = motor.velocity.z = 0;
       target =
         active && !panel.open && !seated
           ? selectInteractable(interior.objects, { ...getView(), trace: collision.segmentFraction })
@@ -298,14 +714,7 @@ export function createHQController({
         prompt.textContent = seated
           ? `${getKey()}　站起`
           : `${getKey()}　${target.type === 'seat' ? '坐下 · ' : target.type === 'bed' ? '休息 · ' : ''}${target.name}`;
-      const inside =
-        active && Math.abs(motor.position.x) < 64 && motor.position.z > 182 && motor.position.z < 252;
-      document.body.classList.toggle('hq-inside', inside);
-      breadcrumb.hidden = !inside;
-      if (inside) {
-        const f = floorAt(motor.position.y);
-        breadcrumb.textContent = `BORDER / ${f.id}　${f.name}${lift.snapshot.moving ? '　｜ 電梯運行中' : ''}`;
-      }
+      updateHud(dt);
     },
     get seatSolids() {
       return seated?.solids ?? null;
@@ -319,6 +728,9 @@ export function createHQController({
     get isOpen() {
       return panel.open;
     },
+    get waypoint() {
+      return waypoint ? { ...waypoint } : null;
+    },
     get snapshot() {
       return {
         active,
@@ -327,6 +739,7 @@ export function createHQController({
         pose,
         panel: panel.open,
         lift: lift.snapshot,
+        waypoint: waypoint ? { ...waypoint } : null,
         ...interior.diagnostics,
       };
     },

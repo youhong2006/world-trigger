@@ -2,46 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { BASE, groundHeight, createCollisionIndex } from './city-layout.js';
-import { HQ, HQ_FLOORS, HQ_STOPS, taperedVolume, stairFlights } from './hq-layout.js';
-import { createHQInterior } from './hq-interior.js';
-import { createDoorSystem, createLiftSystem, selectInteractable } from './hq-systems.js';
-import { createCharacterMotor } from './character-motor.js';
+import { HQ, HQ_FLOORS, HQ_STOPS, HQ_ATRIUM, taperedVolume, stairFlights } from './hq-layout.js';
+import { selectInteractable } from './hq-systems.js';
 import { DEFAULTS, normalizeSettings } from './game-settings.js';
 
-// Canvas labels have no role in navigation; build the real meshes/colliders without a GPU.
-function fixture() {
-  globalThis.document = {
-    createElement: () => ({ width: 1, height: 1, getContext: () => ({ fillRect() {}, fillText() {} }) }),
-  };
-  const collision = createCollisionIndex();
-  const interior = createHQInterior({ scene: new THREE.Scene(), collision });
-  const motor = createCharacterMotor({ groundHeight, collision });
-  motor.configure({ walkSpeed: 5, sprintSpeed: 14 });
-  const doors = createDoorSystem(interior.doors),
-    lift = createLiftSystem(interior.lift, interior.liftDoors, collision);
-  const step = (input = {}, yaw = 0) => {
-    lift.update(1 / 120, motor);
-    doors.update(1 / 120, motor.position, lift.snapshot.y, lift.snapshot.moving);
-    motor.update(1 / 120, input, yaw);
-  };
-  return { collision, interior, motor, doors, lift, step };
-}
-function walkTo(f, x, z, limit = 4000) {
-  for (let i = 0; i < limit; i++) {
-    const dx = x - f.motor.position.x,
-      dz = z - f.motor.position.z;
-    if (Math.hypot(dx, dz) < 0.07) return;
-    f.step({ forward: 1 }, Math.atan2(-dx, -dz));
-  }
-  assert.fail(`Blocked en route to ${x},${z}: ${JSON.stringify(f.motor.position)}`);
-}
+import { fixture, walkTo } from './hq-test-helpers.js';
 
 test('350 m roof retains original wide footprint and human-scale occupied floors', () => {
   assert.equal(HQ.roof, 350);
   assert.equal(BASE.width * BASE.scale, 1248);
-  assert.equal(HQ_FLOORS.length, 8);
+  const storey = BASE.storeyHeight;
+  assert.equal(storey, 6);
+  assert.equal(HQ.wingDepth, BASE.wallThickness * BASE.scale);
+  assert.equal(HQ.wingDepth, 160);
+  assert.equal(HQ_FLOORS.length, 60);
+  assert.equal(HQ_FLOORS[0].id, 'B2');
+  assert.equal(HQ_FLOORS.at(-1).id, '58F');
   assert.equal(HQ_STOPS.at(-1).id, 'RF');
-  for (let i = 1; i < HQ_FLOORS.length; i++) assert.equal(HQ_FLOORS[i].y - HQ_FLOORS[i - 1].y, 4);
+  for (let i = 1; i < HQ_FLOORS.length; i++) assert.equal(HQ_FLOORS[i].y - HQ_FLOORS[i - 1].y, storey);
   assert.equal(stairFlights().at(-1).y + stairFlights().at(-1).rise, HQ.roof);
 });
 test('capsule and camera collide with the real slanted hull instead of its bounding box', () => {
@@ -53,19 +31,19 @@ test('capsule and camera collide with the real slanted hull instead of its bound
   assert.equal(c.segmentFraction({ x: 0, y: 18, z: 104 }, { x: 0, y: 18, z: 101 }, 0.1), 1);
   assert.ok(c.segmentFraction({ x: 0, y: 18, z: 104 }, { x: 0, y: 18, z: 98 }, 0.1) < 1);
 });
-test('player walks from street ramp through automatic entry to the public corridor', () => {
+test('player walks at street grade through the large automatic front gate without jumping', () => {
   const f = fixture();
-  f.motor.teleport({ x: 0, z: 302 });
+  f.place({ x: 0, y: 0, z: 285 });
   assert.equal(f.motor.grounded, true);
-  walkTo(f, 0, 217);
+  walkTo(f, 0, 70, 6000);
   assert.ok(Math.abs(f.motor.position.y - HQ.floor) < 0.02);
-  walkTo(f, -18, 217);
-  walkTo(f, -18, 230);
+  assert.equal(f.motor.lastLandingSpeed, 0);
+  assert.equal(HQ.floor, 0);
   assert.ok(Math.abs(f.motor.position.y - HQ.floor) < 0.02);
 });
 test('the complete physical switchback stairs connect B2 to the 350 m rooftop', () => {
   const f = fixture();
-  f.motor.teleport({ x: 51, y: HQ_FLOORS[0].y, z: 204.5 });
+  f.place({ x: 51, y: HQ_FLOORS[0].y, z: 204.5 });
   for (const flight of stairFlights()) {
     walkTo(f, flight.x, flight.back ? 204.5 : 193.5);
     walkTo(f, flight.x, flight.back ? 193.5 : 204.5);
@@ -76,7 +54,7 @@ test('the complete physical switchback stairs connect B2 to the 350 m rooftop', 
 });
 test('elevator carries a physical passenger to the roof and safely opens only that landing', () => {
   const f = fixture();
-  f.motor.teleport({ x: 43, y: HQ.floor, z: 198 });
+  f.place({ x: 43, y: HQ.floor, z: 198 });
   f.lift.request('RF');
   for (let i = 0; i < 5000; i++) f.step();
   assert.equal(f.lift.snapshot.y, HQ.roof);
@@ -89,8 +67,8 @@ test('elevator carries a physical passenger to the roof and safely opens only th
 });
 test('door anti-crush keeps the entrance clear while the player occupies the threshold', () => {
   const f = fixture(),
-    d = f.interior.doors.find((d) => d.name === 'BORDER 主入口');
-  f.motor.teleport({ x: 0, y: HQ.floor, z: d.z });
+    d = f.interior.doors.find((d) => d.name === 'BORDER 正面大門');
+  f.place({ x: 0, y: HQ.floor, z: d.z });
   for (let i = 0; i < 800; i++) f.doors.update(1 / 120, f.motor.position, HQ.floor, false);
   assert.equal(d.progress, 1);
   assert.equal(f.collision.canOccupy(0, d.z, HQ.floor, 1.75), true);
@@ -119,13 +97,13 @@ test('old default F side-swap migrates to Z without losing E or other custom bin
   assert.equal(new Set(Object.values(old.bindings)).size, Object.keys(DEFAULTS.bindings).length);
 });
 
-test('training atrium remains open through the 3F gallery instead of intersecting a floor slab', () => {
+test('training atrium is a real double-height opening through its upper gallery', () => {
   const f = fixture();
-  assert.equal(f.collision.canOccupy(-25, 201, HQ.floor + 7, 1.75, 0.28), true);
-  assert.equal(f.collision.surfaceHeightAt(-25, 201, HQ.floor + 8, 0.38), HQ.floor + 4);
-  f.motor.teleport({ x: -42, y: HQ.floor + 4, z: 208.8 });
-  walkTo(f, -42, 194.8);
-  assert.ok(Math.abs(f.motor.position.y - (HQ.floor + 8)) < 0.02);
+  const x = (HQ_ATRIUM.minX + HQ_ATRIUM.maxX) / 2,
+    z = (HQ_ATRIUM.minZ + HQ_ATRIUM.maxZ) / 2;
+  f.place({ x, y: HQ_ATRIUM.y, z });
+  assert.equal(f.collision.canOccupy(x, z, HQ_ATRIUM.y + 3, 1.75, 0.28), true);
+  assert.equal(f.collision.surfaceHeightAt(x, z, HQ_ATRIUM.y + 4, 0.38), HQ_ATRIUM.y);
 });
 
 test('virtual training uses a separate scene, saves cleared scores and returns the player and avatar', async () => {
@@ -164,16 +142,13 @@ test('virtual training uses a separate scene, saves cleared scores and returns t
   assert.equal(sim.active, false);
 });
 
-test('boost-speed motion stays outside interior walls and closed landing shafts', () => {
+test('closed elevator landings prevent entry into an empty shaft', () => {
   const f = fixture();
-  f.motor.teleport({ x: -25, y: HQ.floor - 4, z: 217 });
+  const landingY = HQ_FLOORS.find((f) => f.id === '2F').y;
+  f.place({ x: 43, y: landingY, z: 205 });
   for (let i = 0; i < 120; i++) f.step({ dash: { x: 0, z: -65 } }, 0);
-  assert.ok(f.motor.position.z >= 190.3);
-  assert.equal(
-    f.collision.canOccupy(43, 200.1, HQ.floor + 4, 1.75),
-    false,
-    'unoccupied landing stays closed',
-  );
+  assert.ok(f.motor.position.z >= 200.2);
+  assert.equal(f.collision.canOccupy(43, 200.1, landingY, 1.75), false);
 });
 
 test('fortress exterior has outward flat normals and non-collapsed wall UVs', async () => {

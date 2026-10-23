@@ -100,3 +100,5 @@ node --test src/*.test.js
 
 
 2026-10-23 基地探索初版已實作：主屋頂改為 350 m，1,248 × 800 m 占地保留，南側主設施翼可進入，B2–6F 及 RF 有樓梯／電梯銜接。住宅室內不在本次範圍；見 [基地實作紀錄](border-headquarters/implementation.md)。
+
+2026-10-23 基地探索擴充：移除抬高基座與坡道，正面大門接街道標高；四側可用深度 160 m、一般層高 6 m，細分房間與走道延伸至 58F，RF 維持 350 m。7F 為實體長條射擊場，2F／3F 為排名大廳；細節與當版截圖見 [基地實作紀錄](border-headquarters/implementation.md)。

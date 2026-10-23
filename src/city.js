@@ -4,7 +4,7 @@ import { createLandscape } from './landscape.js';
 import { createArchitecture } from './architecture.js';
 import { ARCHITECTURE, orientedFootprint } from './building-metrics.js';
 import { planStreetBlock, urbanOccupancy } from './neighborhood.js';
-import { CITY, STREETS, basinRadius, terrainHeight, settlementDensity, riverZ, ringDistance, inRiver, inCampus, forestAt, seededRandom, streetPosition, streetWidth, streetEdgeWidth, streetElevation, streetAllowed, streetClearance, bridgeSurfaceHeight } from './city-layout.js';
+import { BASE, CITY, STREETS, basinRadius, terrainHeight, settlementDensity, riverZ, ringDistance, inRiver, inCampus, forestAt, seededRandom, streetPosition, streetWidth, streetEdgeWidth, streetElevation, streetAllowed, streetClearance, bridgeSurfaceHeight } from './city-layout.js';
 
 const greens = ['#2a633f', '#3d7746', '#477f48', '#376e42', '#56884b'];
 
@@ -212,7 +212,13 @@ export function createCity({ scene, box, collision }) {
 
   const campus = CITY.campus, campusWidth = campus.maxX - campus.minX, campusDepth = campus.maxZ - campus.minZ;
   const campusZ = (campus.minZ + campus.maxZ) / 2;
-  box(0, -0.12, campusZ, campusWidth, 0.13, campusDepth, '#bfad83');
+  // Only the outside apron is paved; never cover the HQ floor or basement/stair openings.
+  const hx = BASE.width * BASE.scale / 2, hz = BASE.depth * BASE.scale / 2;
+  const rear = BASE.z - hz, front = BASE.z + hz;
+  for (const r of [
+    [campus.minX, -hx, campus.minZ, campus.maxZ], [hx, campus.maxX, campus.minZ, campus.maxZ],
+    [-hx, hx, campus.minZ, rear], [-hx, hx, front, campus.maxZ],
+  ]) box((r[0]+r[1])/2, -.14, (r[2]+r[3])/2, r[1]-r[0], .14, r[3]-r[2], '#bfad83');
   for (const x of [campus.minX + 15, campus.maxX - 15]) box(x, 0.02, campusZ, 8, 0.08, campusDepth - 30, '#a7a899');
   box(0, 0.02, campus.maxZ - 15, campusWidth - 30, 0.08, 8, '#a7a899');
   box(0, 0.06, (campus.maxZ + riverZ(0) - CITY.bridgeLength / 2) / 2, 18, 0.08, riverZ(0) - CITY.bridgeLength / 2 - campus.maxZ, '#8a9495');
