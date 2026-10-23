@@ -2,7 +2,7 @@
 
 The website uses the checked-in GLB; normal `npm ci`, `npm test` and `npm run build` do not run this tool or need these optional dependencies.
 
-The converter accepts a CC0 VRoid 0.x model and Quaternius's CC0 Standard animation library. It preserves humanoid mapping, retargets a T-pose-normalized skeleton, removes root travel, keeps eight locomotion clips, preserves normals for toon lighting and packages WebP textures up to 1024 pixels. Runtime styling and the original skinned coat are in `src/player-avatar.js`.
+The converter accepts a CC0 VRoid 0.x model and Quaternius's CC0 Standard animation library. It preserves humanoid mapping, retargets a T-pose-normalized skeleton, removes root travel, keeps eight locomotion and six combat clips, preserves normals for toon lighting and packages WebP textures up to 1024 pixels. Runtime styling and the original skinned coat are in `src/player-avatar.js`.
 
 ```sh
 npm ci --prefix tools/avatar-pipeline

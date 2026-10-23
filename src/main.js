@@ -8,6 +8,10 @@ import { createShootingVisuals } from './shooting-visuals.js';
 import { loadDraft } from './trajectory-plan.js';
 import { createFiringMenu } from './firing-menu.js';
 import { createFiringPanel } from './firing-panel.js';
+import { createBattleBody, BODY_PARTS } from './battle-body.js';
+import { createMeleeCombat } from './melee-combat.js';
+import { createBattleSession, BATTLE_SPAWN, MISSION_MODES, DIFFICULTIES, ARENA } from './battle-session.js';
+import { createBattleVisuals } from './battle-visuals.js';
 import { TRIGGERS, createCombatCore } from './combat-core.js';
 import { createGrasshopper } from './grasshopper.js';
 import { createGrasshopperVisuals } from './grasshopper-visuals.js';
@@ -165,7 +169,15 @@ const destinations = [
     previewLook: new THREE.Vector3(-2000, 30, 120),
   },
 ];
-const motor = createCharacterMotor({ groundHeight, collision });
+const motor = createCharacterMotor({
+  groundHeight,
+  collision: {
+    ...collision,
+    canOccupy(x, z, y, h, r) {
+      return collision.canOccupy(x, z, y, h, r) && !battle.overlaps(x, z, y, h, r);
+    },
+  },
+});
 const playerView = createPlayerCamera({
   camera,
   collision,
@@ -229,6 +241,214 @@ const grasshopper = createGrasshopper({
 });
 const armory = createArmory(storage);
 const traceWorld = createWorldTrace(collision, groundHeight);
+const battleEffects = createBattleVisuals(scene, collision, groundHeight);
+const rangeStrikeHits = new Set();
+let feedback = 0,
+  dodgeVector = { x: 0, z: 0 },
+  lastBattleHud = '';
+const body = createBattleBody({
+  combat,
+  onEvent(type, detail) {
+    battleEffects.event(type, { ...detail, position: { ...motor.position, y: motor.position.y + 1 } });
+    if (type === 'sever') {
+      if (detail.part === 'rightArm') shooting.clear('main');
+      if (detail.part === 'leftArm') shooting.clear('sub');
+      if (!activeTrigger('grasshopper')) grasshopper.cancel();
+    }
+    if (type === 'sever') notify(`${BODY_PARTS[detail.part].name}已破壞 · 無法自然修復`);
+    if (type === 'critical') battle.bailout('critical');
+  },
+});
+const melee = createMeleeCombat({
+  combat,
+  onEvent(type, detail) {
+    const position = { ...motor.position, y: motor.position.y + 1 };
+    battleEffects.event(type, { ...detail, position });
+    if (type === 'swing') rangeStrikeHits.clear();
+    if (type === 'strike') {
+      battle.strike(detail, playerBattleState());
+      if (range.snapshot.phase === 'active')
+        for (const t of range.targets) {
+          const dx = t.position.x - position.x,
+            dz = t.position.z - position.z,
+            d = Math.hypot(dx, dz);
+          if (
+            !rangeStrikeHits.has(t.id) &&
+            d < detail.reach + t.radius &&
+            Math.abs(t.position.y - position.y) < 2 &&
+            (dx * -Math.sin(yaw) + dz * -Math.cos(yaw)) / (d || 1) > Math.cos(detail.arc) &&
+            traceWorld(position, t.position, 0.05) > 0.999
+          ) {
+            rangeStrikeHits.add(t.id);
+            range.hit(t.id, detail.damage);
+          }
+        }
+    }
+    if (['swing', 'parry', 'block', 'dodge', 'guardBreak'].includes(type)) audio.tone(type);
+    if (type === 'parry') {
+      feedback = 0.35;
+      notify('招架成功 · 敵人短暫失衡');
+    }
+    weaponRevision++;
+  },
+});
+const battle = createBattleSession({
+  groundHeight,
+  collision,
+  traceWorld,
+  storage,
+  onEvent(type, detail) {
+    battleEffects.event(type, detail);
+    if (type === 'enemyHit') {
+      hitUntil = performance.now() + 160;
+      audio.tone('hit');
+    }
+    if (type === 'wave')
+      notify(
+        `第 ${detail.wave} ${detail.mode === 'patrol' ? '巡邏區' : '波'} · 注意敵人的青色核心與橘色攻擊預兆`,
+      );
+    if (type === 'waypoint') notify('前往青色光環，啟動下一個巡邏區');
+    if (type === 'bailout') {
+      clearInput();
+      melee.reset();
+      shooting.clear();
+      grasshopper.cancel();
+      audio.tone('bailout');
+    }
+    if (type === 'enemyDown') audio.tone('hit');
+  },
+  onPlayerHit: damagePlayer,
+  onFinish: finishBattle,
+});
+function getTargets() {
+  return battle.phase === 'idle' ? range.targets : battle.targets;
+}
+function playerBattleState() {
+  return {
+    position: { ...motor.position },
+    velocity: { ...motor.velocity },
+    yaw,
+    crouched: motor.crouched,
+    volumes: body.volumes(motor.position, yaw, motor.crouched),
+  };
+}
+function activeTrigger(type) {
+  return ['main', 'sub'].some((side) => armory.active(side) === type && body.usable(side));
+}
+function bladeSide() {
+  return ['main', 'sub'].find((side) => armory.active(side) === 'blade' && body.usable(side));
+}
+function damagePlayer(hit) {
+  const defense = melee.defend({ ...hit, position: motor.position, yaw });
+  if (defense.damage > 0) {
+    body.hit(hit.part, defense.damage);
+    melee.stagger(hit.damage > 16 ? 0.4 : 0.22);
+    grasshopper.cancel();
+    feedback = 0.45;
+    audio.tone('hurt');
+  }
+  return defense;
+}
+function finishBattle(result) {
+  clearInput();
+  shooting.clear();
+  pointerIntent = 'cursor';
+  if (document.pointerLockElement) document.exitPointerLock?.();
+  document.querySelector('#challenge-result').hidden = false;
+  document.querySelector('#result-title').textContent =
+    result.phase === 'victory' ? '任務完成' : '緊急脫離完成';
+  document.querySelector('#result-reason').textContent =
+    {
+      cleared: '作戰目標已達成',
+      critical: '關鍵部位破壞',
+      trion: '三離子耗盡',
+      manual: '已主動脫離戰鬥',
+      timeout: '任務時間已到',
+      boundary: '離開作戰範圍過久',
+      spawn: '找不到安全的敵人生成位置',
+    }[result.reason] ?? '戰鬥結束';
+  document.querySelector('#result-stats').textContent =
+    `${MISSION_MODES[result.mode]} · ${DIFFICULTIES[result.difficulty].name} · 擊破 ${result.cleared}/${result.total} · ${result.time.toFixed(1)} s · ${result.score} 分`;
+  syncPlayerHud(true);
+}
+function startBattle(options = {}) {
+  if (
+    ![...armory.profile.main, ...armory.profile.sub].some(
+      (id) => id === 'blade' || SHOOTING_TYPES.includes(id),
+    )
+  ) {
+    notify('至少配備一項刀劍或射擊觸發器才能出擊');
+    ui.open('loadout');
+    return;
+  }
+  if (ui.isOpen) ui.close();
+  enter();
+  safeSpawn = {
+    point: { x: BATTLE_SPAWN.x, y: groundHeight(BATTLE_SPAWN.x, BATTLE_SPAWN.z), z: BATTLE_SPAWN.z },
+    yaw: BATTLE_SPAWN.yaw,
+    pitch: 0,
+  };
+  yaw = safeSpawn.yaw;
+  pitch = 0;
+  motor.teleport(safeSpawn.point, yaw);
+  playerView.reset();
+  playerView.update(0, viewState());
+  battle.start(options);
+  document.querySelector('#location').textContent = 'BORDER · 單人作戰區';
+  lastBattleHud = '';
+  syncPlayerHud(true);
+}
+function dodge() {
+  if (!exploring || paused || endedChallenge() || battle.phase === 'bailout') return;
+  if (!melee.dodge()) return;
+  grasshopper.cancel();
+  const input = moveInput(),
+    f = input.forward || (!input.strafe ? -1 : 0),
+    r = input.strafe,
+    l = Math.hypot(f, r) || 1;
+  dodgeVector = {
+    x: ((-Math.sin(yaw) * f + Math.cos(yaw) * r) / l) * 18 * body.snapshot.speedScale,
+    z: ((-Math.cos(yaw) * f - Math.sin(yaw) * r) / l) * 18 * body.snapshot.speedScale,
+  };
+}
+function syncBattleHud() {
+  const b = battle.snapshot,
+    a = melee.snapshot,
+    w = body.snapshot;
+  document.querySelector('#battle-hud').hidden = b.phase === 'idle';
+  document.querySelector('#battle-title').textContent =
+    `${MISSION_MODES[b.mode]} / ${DIFFICULTIES[b.difficulty].name}`;
+  document.querySelector('#battle-progress').textContent =
+    b.phase === 'bailout'
+      ? '緊急脫離中…'
+      : `${b.waypoint ? '前往光環 · ' : ''}${b.wave}/${b.waves} 區 · 擊破 ${b.cleared}/${b.total} · ${Math.ceil(b.remaining)} s`;
+  document.querySelector('#battle-warning').textContent =
+    b.outside > 0
+      ? `返回作戰區域 · ${Math.ceil(12 - b.outside)} s`
+      : w.leakage > 0
+        ? `持續洩漏 −${w.leakage.toFixed(2)}/s · 受損部位無法自然修復`
+        : '';
+  const sig = `${w.revision}/${a.phase}/${a.parryWindow}/${b.phase}`;
+  if (sig !== lastBattleHud) {
+    lastBattleHud = sig;
+    document.querySelector('#body-status').innerHTML = Object.entries(w.parts)
+      .map(
+        ([id, p]) =>
+          `<span class="${p.destroyed ? 'severed' : p.health < p.maximum ? 'wounded' : ''}" title="${BODY_PARTS[id].name} ${Math.ceil(p.health)}/${p.maximum}">${BODY_PARTS[id].name}<i style="--integrity:${p.health / p.maximum}"></i></span>`,
+      )
+      .join('');
+    document.querySelector('#action-state').textContent =
+      {
+        idle: '就緒',
+        attack: '斬擊',
+        charge: '蓄力',
+        guard: a.parryWindow ? '招架窗口' : '防禦',
+        dodge: '閃避 · 無無敵時間',
+        stagger: '受擊硬直',
+      }[a.phase] ?? '';
+  }
+}
+
 let selectedTargetId = null,
   fireQueued = false,
   weaponRevision = 0,
@@ -243,20 +463,25 @@ const gunEffects = createShootingVisuals(scene, collision);
 const shooting = createShootingSystem({
   combat,
   traceWorld,
-  getTargets: () => range.targets,
+  getTargets,
   getPaths: () => loadDraft(storage).paths,
   onEvent(type, detail) {
     gunEffects.event(type, detail);
+    battleEffects.event(type, detail);
     weaponRevision++;
-    if (type === 'shot') range.recordShot();
+    if (type === 'shot') {
+      range.recordShot();
+      battle.recordShot();
+    }
     if (type === 'generate' || type === 'release') audio.tone(type === 'generate' ? 'place' : 'fire');
     if (type === 'impact' && detail.targetId) {
       hitUntil = performance.now() + 150;
       audio.tone('hit');
     }
   },
-  onHit(id, damage, point) {
-    range.hit(id, damage);
+  onHit(id, damage, point, bullet) {
+    if (battle.phase !== 'idle') battle.hit(id, damage, point, bullet);
+    else range.hit(id, damage);
   },
 });
 const firingMenu = createFiringMenu({
@@ -300,7 +525,7 @@ armory.subscribe((reason) => {
   lastHud = '';
 });
 function endedChallenge() {
-  return ['victory', 'defeat'].includes(range.snapshot.phase);
+  return ['victory', 'defeat'].includes(range.snapshot.phase) || ['victory', 'defeat'].includes(battle.phase);
 }
 function selectedGun() {
   const p = armory.profile,
@@ -341,7 +566,7 @@ function currentAim() {
     origin: aimOrigin,
     forward: aimForward,
     range: gun.config?.range ?? 220,
-    targets: range.targets,
+    targets: getTargets(),
     traceWorld,
     assist: (isAiming() && gun.config?.aim === 'assist') || gun.type === 'hound',
     selectedId: selectedTargetId,
@@ -351,6 +576,11 @@ function prepareCube() {
   if (!exploring || paused || endedChallenge()) return;
   const gun = selectedGun();
   firingMenu.activate(gun.type);
+  if (!body.usable(gun.side) || !melee.can('fire') || battle.phase === 'bailout') return;
+  if (gun.type === 'blade') {
+    notify('刀劍已啟動 · 左鍵輕擊、G 蓄力、右鍵格擋');
+    return;
+  }
   if (!SHOOTING_TYPES.includes(gun.type)) {
     notify('此側尚未啟動射擊觸發器，請切換槽位或射擊側');
     return;
@@ -365,6 +595,14 @@ function prepareCube() {
 function fireCurrent() {
   if (!exploring || paused || endedChallenge()) return;
   const gun = selectedGun();
+  if (!body.usable(gun.side) || battle.phase === 'bailout') return;
+  if (gun.type === 'blade') {
+    grasshopper.cancel();
+    melee.attack();
+    return;
+  }
+  if (!melee.can('fire')) return;
+  if (melee.snapshot.phase !== 'idle') melee.cancel();
   if (!SHOOTING_TYPES.includes(gun.type)) {
     if (performance.now() - lastShotNotice > 1800) {
       notify('按 F 切換射擊側，或用數字鍵啟動射擊槽位');
@@ -392,7 +630,7 @@ function fireCurrent() {
 }
 function cycleAimTarget() {
   camera.getWorldDirection(aimForward);
-  const visible = range.targets.filter(
+  const visible = getTargets().filter(
     (t) =>
       t.health > 0 &&
       traceWorld(camera.position, t.position, 0.02) > 0.999 &&
@@ -480,6 +718,16 @@ function updateWeaponHud() {
       ? '正在發射'
       : `${keyLabel(settings.bindings.prepare)} 生成 · ${keyLabel(settings.bindings.fire)} 發射`;
   document.querySelector('#weapon-special').hidden = gun.type !== 'meteor';
+  if (gun.type === 'blade') {
+    document.querySelector('#weapon-details').textContent = '三段輕擊 · 蓄力重擊 · 空中斬擊';
+    document.querySelector('#weapon-ready').textContent =
+      `${keyLabel(settings.bindings.fire)} 輕擊 · ${keyLabel(settings.bindings.heavy)} 蓄力 · ${keyLabel(settings.bindings.split)} 格擋`;
+  }
+  if (gun.type === 'shield')
+    document.querySelector('#weapon-details').textContent =
+      `按住 ${keyLabel(settings.bindings.guard)} 防禦 · 每秒 0.35 + 受擊消耗`;
+  if (!body.usable(gun.side))
+    document.querySelector('#weapon-ready').textContent = '此側手臂已破壞 · 請切換另一側';
   document.querySelector('#weapon-profile').textContent = p.name;
   const slotMarkup = ['main', 'sub']
     .map(
@@ -494,7 +742,10 @@ function updateWeaponHud() {
       (b) =>
         (b.onclick = () => {
           const [side, n] = b.dataset.slot.split(':');
-          armory.selectSlot(side, Number(n));
+          if (melee.can('switch')) {
+            melee.cancel();
+            armory.selectSlot(side, Number(n));
+          }
         }),
     );
   }
@@ -544,12 +795,15 @@ function clearInput() {
   dragging = false;
   fireQueued = false;
   grasshopper.cancel();
+  melee.guard(false);
+  if (melee.snapshot.phase === 'charge') melee.cancel();
   if (!settings.crouchToggle) crouchRequested = false;
 }
 function syncPlayerHud(force = false) {
   const core = combat.snapshot,
     gh = grasshopper.snapshot;
   const signature = `${playerView.mode}/${motor.crouched}/${motor.animation}/${core.remaining.toFixed(1)}/${core.state}/${motor.speed.toFixed(1)}/${Math.round(motor.position.y)}/${gh.pads.length}/${core.recovery}/${JSON.stringify(settings.bindings)}/${weaponRevision}/${Math.round(range.snapshot.remaining * 10)}`;
+  syncBattleHud();
   if (!force && signature === lastHud) return;
   lastHud = signature;
   document.body.classList.toggle('third-person', playerView.mode === 'third');
@@ -583,7 +837,7 @@ function syncPlayerHud(force = false) {
       : core.state === 'exhausted'
         ? '需要重整'
         : core.recovery > 0
-          ? `+${core.recovery.toFixed(1)}/s`
+          ? `${core.leakage > 0 ? '洩漏 −' + core.leakage.toFixed(1) + ' / ' : ''}+${core.recovery.toFixed(1)}/s`
           : '恢復等待中';
   document.querySelector('.trion-card').classList.toggle('low', core.remaining < 20);
   document.querySelector('#pad-count').textContent =
@@ -593,11 +847,12 @@ function syncPlayerHud(force = false) {
     ? '放開即可釋放'
     : core.state === 'exhausted'
       ? '三離子耗盡'
-      : !['main', 'sub'].some((side) => armory.active(side) === 'grasshopper')
+      : !activeTrigger('grasshopper')
         ? '未啟動蚱蜢槽位'
         : `按住準備 · 放開釋放`;
   document.querySelector('.ability-card').classList.toggle('charging', gh.charging);
   updateWeaponHud();
+  syncBattleHud();
   document.querySelector('#walk-hint').textContent =
     `${keyLabel(settings.bindings.forward)}${keyLabel(settings.bindings.left)}${keyLabel(settings.bindings.back)}${keyLabel(settings.bindings.right)} 移動 · ${keyLabel(settings.bindings.sprint)} 衝刺 · ${keyLabel(settings.bindings.jump)} 跳躍 · Esc 選單`;
 }
@@ -611,6 +866,7 @@ function applySettings(value) {
   audio.configure(value);
   effects.configure(value);
   gunEffects.configure(value);
+  battleEffects.configure(value);
   const resolution = Math.min(2, (devicePixelRatio || 1) * value.resolution);
   if (renderer.getPixelRatio() !== resolution) renderer.setPixelRatio(resolution);
   if (renderer.shadowMap.enabled !== value.shadows) {
@@ -677,6 +933,10 @@ function resume() {
 function enter() {
   if (ui.isOpen) ui.close();
   range.reset();
+  battle.reset();
+  body.reset();
+  melee.reset();
+  battleEffects.hide();
   shooting.reset();
   document.querySelector('#challenge-result').hidden = true;
   exploring = true;
@@ -709,6 +969,8 @@ function enter() {
   lockPointer();
 }
 function leave() {
+  feedback = 0;
+  document.querySelector('#damage-feedback').style.opacity = '0';
   exploring = false;
   pointerIntent = 'overview';
   clearInput();
@@ -718,6 +980,10 @@ function leave() {
   shooting.reset();
   range.reset();
   gunEffects.hideWeapons();
+  battle.reset();
+  body.reset();
+  melee.reset();
+  battleEffects.hide();
   document.querySelector('#challenge-result').hidden = true;
   avatar.setVisible(false);
   document.body.classList.remove('exploring', 'third-person');
@@ -732,6 +998,13 @@ function leave() {
   renderRequested = true;
 }
 function respawn() {
+  if (battle.phase !== 'idle') {
+    const { mode, difficulty } = battle.snapshot;
+    startBattle({ mode, difficulty });
+    return;
+  }
+  body.reset();
+  melee.reset();
   if (range.snapshot.phase !== 'idle') {
     startChallenge();
     return;
@@ -771,15 +1044,20 @@ function toggleCrouch() {
 }
 function beginCast() {
   if (!exploring || paused || endedChallenge() || combat.snapshot.state === 'exhausted') return;
-  if (!['main', 'sub'].some((side) => armory.active(side) === 'grasshopper')) {
+  if (!activeTrigger('grasshopper') || !melee.can('grasshopper') || battle.phase === 'bailout') {
     notify('目前啟動的槽位沒有蚱蜢，請用數字鍵切換');
     return;
   }
+  if (melee.snapshot.phase !== 'idle') melee.cancel();
   if (!grasshopper.begin())
     notify(combat.snapshot.remaining < 0.3 ? '三離子不足，稍待恢復或返回起點' : '技能尚在準備，稍後再試');
 }
 function releaseCast() {
   if (!exploring || paused) return;
+  if (!melee.can('grasshopper')) {
+    grasshopper.cancel();
+    return;
+  }
   grasshopper.release(moveInput(), yaw);
   syncPlayerHud(true);
 }
@@ -788,6 +1066,9 @@ ui = createGameUI({
   storage,
   armory,
   onStartChallenge: startChallenge,
+  onStartBattle: startBattle,
+  getBattleRecords: () => battle.snapshot.best,
+  onBattleRecords: (value) => battle.importRecords(value),
   onSettings: applySettings,
   onPause: pause,
   onResume: resume,
@@ -799,9 +1080,13 @@ ui = createGameUI({
 applySettings(settings);
 document.querySelector('#enter').onclick = enter;
 document.querySelector('#start-challenge').onclick = startChallenge;
-document.querySelector('#retry-challenge').onclick = startChallenge;
+document.querySelector('#retry-challenge').onclick = respawn;
 document.querySelector('#finish-challenge').onclick = () => {
   range.reset();
+  battle.reset();
+  body.reset();
+  melee.reset();
+  battleEffects.hide();
   respawn();
   document.querySelector('#challenge-result').hidden = true;
 };
@@ -809,6 +1094,7 @@ document.querySelector('#prepare-cube').onclick = prepareCube;
 document.querySelector('#fire-cube').onclick = () => {
   fireCurrent();
 };
+document.querySelector('#start-battle').onclick = () => ui.open('missions');
 document.querySelector('#camera-view').onclick = toggleView;
 document.querySelector('#crouch-toggle').onclick = toggleCrouch;
 document.querySelector('#player-reset').onclick = respawn;
@@ -847,8 +1133,9 @@ combat.subscribe((event) => {
     pointerIntent = 'cursor';
     clearInput();
     if (document.pointerLockElement) document.exitPointerLock?.();
-    range.fail();
-    notify('三離子耗盡，請返回起點重整');
+    if (battle.phase === 'active') battle.bailout('trion');
+    else range.fail();
+    notify('三離子耗盡，戰鬥體進入緊急脫離');
   }
 });
 document.addEventListener('pointerlockchange', () => {
@@ -907,7 +1194,17 @@ document.querySelector('#sound').onclick = () => {
   ui.update({ muted: !settings.muted });
   audio.start();
 };
+function releaseBattleAction(code) {
+  if (paused || ui.isOpen) return;
+  if (code === settings.bindings.heavy) melee.heavyRelease();
+  if (
+    code === settings.bindings.guard ||
+    (code === settings.bindings.split && selectedGun().type === 'blade')
+  )
+    melee.guard(false);
+}
 function dispatchAction(action) {
+  if ((endedChallenge() || battle.phase === 'bailout') && !['reset', 'view'].includes(action)) return;
   if (action === 'jump') jumpQueued = true;
   if (action === 'sprint' && settings.sprintToggle) sprintLatched = !sprintLatched;
   if (action === 'crouch') {
@@ -917,18 +1214,36 @@ function dispatchAction(action) {
   if (action === 'view') toggleView();
   if (action === 'reset') respawn();
   if (action === 'grasshopper') beginCast();
+  if (action === 'dodge') dodge();
+  if (action === 'guard') melee.guard(true);
+  if (action === 'heavy' && bladeSide()) {
+    grasshopper.cancel();
+    melee.heavyStart();
+  }
+  if (action === 'bailout') {
+    if (battle.phase === 'active') battle.bailout('manual');
+    else if (battle.phase === 'idle' && exploring) {
+      notify('戰鬥體重整完成');
+      respawn();
+    }
+  }
   if (action === 'prepare') prepareCube();
   if (action === 'fire') fireQueued = true;
-  if (action === 'split') splitCube();
+  if (action === 'split') {
+    if (selectedGun().type === 'blade') melee.guard(true);
+    else splitCube();
+  }
   if (action === 'menuEnter') {
     firingMenu.activate(selectedGun().type);
     firingMenu.enter();
   }
   if (action === 'menuBack') firingMenu.back();
-  if (action === 'swapSide') armory.setSide(armory.profile.fireSide === 'main' ? 'sub' : 'main');
+  if (action === 'swapSide' && melee.can('switch'))
+    armory.setSide(armory.profile.fireSide === 'main' ? 'sub' : 'main');
   if (action === 'cycleTarget') cycleAimTarget();
-  if (/^slot[1-8]$/.test(action ?? '')) {
+  if (/^slot[1-8]$/.test(action ?? '') && melee.can('switch')) {
     const n = Number(action.slice(4)) - 1;
+    melee.cancel();
     armory.selectSlot(n < 4 ? 'main' : 'sub', n % 4);
   }
 }
@@ -976,6 +1291,7 @@ window.addEventListener('keydown', (event) => {
 });
 window.addEventListener('keyup', (event) => {
   keys[event.code] = false;
+  releaseBattleAction(event.code);
   if (event.code === settings.bindings.crouch && !settings.crouchToggle) crouchRequested = false;
   if (event.code === settings.bindings.grasshopper && !paused && !ui.isOpen) releaseCast();
 });
@@ -1018,6 +1334,7 @@ for (const type of ['mousedown', 'mouseup', 'auxclick'])
   });
 window.addEventListener('pointerup', (event) => {
   keys['Mouse' + event.button] = false;
+  releaseBattleAction('Mouse' + event.button);
   if (settings.bindings.crouch === 'Mouse' + event.button && !settings.crouchToggle) crouchRequested = false;
   if (settings.bindings.grasshopper === 'Mouse' + event.button && !paused && !ui.isOpen) releaseCast();
   dragging = false;
@@ -1140,9 +1457,43 @@ mapCtx.font = '8px sans-serif';
 mapCtx.fillStyle = '#294638';
 mapCtx.fillText('BORDER', baseX - 15, baseZ - 3);
 function drawMap() {
-  ctx.drawImage(mapBackground, 0, 0);
+  const local = battle.phase !== 'idle';
+  const projection = local
+    ? (x, z) => [180 + ((x - ARENA.x) * 180) / ARENA.radius, 130 + ((z - ARENA.z) * 130) / ARENA.radius]
+    : mapPoint;
+  if (local) {
+    ctx.fillStyle = '#0b2532';
+    ctx.fillRect(0, 0, 360, 260);
+    ctx.strokeStyle = '#2a5660';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 360; i += 36) {
+      ctx.beginPath();
+      ctx.moveTo(i, 0);
+      ctx.lineTo(i, 260);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 260; i += 26) {
+      ctx.beginPath();
+      ctx.moveTo(0, i);
+      ctx.lineTo(360, i);
+      ctx.stroke();
+    }
+    for (const enemy of battle.targets) {
+      const [x, z] = projection(enemy.position.x, enemy.position.z);
+      ctx.fillStyle = enemy.state === 'telegraph' ? '#ffbb66' : '#15d7e8';
+      ctx.beginPath();
+      ctx.arc(x, z, enemy.boss ? 5 : 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const waypoint = battle.snapshot.waypoint;
+    if (waypoint) {
+      const [x, z] = projection(waypoint.x, waypoint.z);
+      ctx.strokeStyle = '#4bf5e6';
+      ctx.strokeRect(x - 5, z - 5, 10, 10);
+    }
+  } else ctx.drawImage(mapBackground, 0, 0);
   const mapPosition = exploring ? motor.position : camera.position;
-  const [px, pz] = mapPoint(mapPosition.x, mapPosition.z);
+  const [px, pz] = projection(mapPosition.x, mapPosition.z);
   if (exploring) {
     ctx.fillStyle = '#214f39';
     ctx.beginPath();
@@ -1198,9 +1549,29 @@ renderer.setAnimationLoop((now) => {
       if (endedChallenge()) break;
       combat.update(dt);
       range.update(dt);
+      melee.update(dt, { blade: !!bladeSide(), shield: activeTrigger('shield'), grounded: motor.grounded });
+      if (actionPressed('guard') || (selectedGun().type === 'blade' && actionPressed('split')))
+        melee.guard(true);
       shooting.update(dt);
+      battle.update(dt, playerBattleState());
       grasshopper.update(dt);
-      motor.update(dt, exhausted ? {} : input, yaw);
+      const a = melee.snapshot,
+        w = body.snapshot;
+      const disabled = exhausted || battle.phase === 'bailout';
+      const movement = disabled
+        ? {}
+        : {
+            ...input,
+            speedScale: w.speedScale * a.speedScale,
+            jumpScale: w.jumpScale,
+            crouch: input.crouch || w.lostLegs === 2,
+            dash: a.phase === 'dodge' ? dodgeVector : null,
+          };
+      if (w.jumpScale === 0) {
+        movement.jump = false;
+        movement.jumpPressed = false;
+      }
+      motor.update(dt, movement, yaw);
       if (combat.snapshot.state !== 'exhausted') grasshopper.checkStep(from, motor.position, input, yaw);
       input.jumpPressed = false;
       remaining -= dt;
@@ -1220,9 +1591,22 @@ renderer.setAnimationLoop((now) => {
     state.charging = grasshopper.snapshot.charging;
     state.aiming = isAiming();
     state.aimPitch = pitch;
+    state.battleAction = melee.snapshot;
+    state.bladeSide = bladeSide();
+    state.body = body.snapshot;
+    state.bailout = battle.phase === 'bailout';
+    if (state.battleAction.phase !== 'idle') state.heading = yaw;
     if (state.aiming) state.heading = yaw;
     avatar.update(elapsed, state);
-    avatar.setVisible(playerView.avatarVisible);
+    avatar.setVisible(
+      playerView.avatarVisible && !(battle.phase === 'bailout' && battle.snapshot.bailoutProgress > 0.55),
+    );
+    feedback = Math.max(0, feedback - elapsed);
+    document.querySelector('#damage-feedback').style.opacity = String(feedback * settings.hitFlash);
+    if (feedback > 0 && !settings.reducedMotion && settings.cameraShake > 0) {
+      camera.position.x += Math.sin(now * 0.045) * feedback * settings.cameraShake * 0.12;
+      camera.position.y += Math.cos(now * 0.053) * feedback * settings.cameraShake * 0.08;
+    }
     if (playerView.mode === 'first') {
       camera.getWorldDirection(direction);
       rightVector.set(Math.cos(yaw), 0, -Math.sin(yaw));
@@ -1232,7 +1616,7 @@ renderer.setAnimationLoop((now) => {
     if (!endedChallenge() && fireQueued) fireCurrent();
     fireQueued = false;
     const aim = currentAim(),
-      t = range.targets.find((t) => t.id === aim.targetId);
+      t = getTargets().find((t) => t.id === aim.targetId);
     document.querySelector('#target-readout').textContent = t
       ? `${t.id} · ${Math.ceil(t.health)} / ${t.maxHealth}`
       : '';
@@ -1240,7 +1624,39 @@ renderer.setAnimationLoop((now) => {
     document.body.classList.toggle('aiming', isAiming());
     muzzleMain.copy(muzzle('main'));
     muzzleSub.copy(muzzle('sub'));
-    gunEffects.update(elapsed, shooting.snapshot, range.targets, { main: muzzleMain, sub: muzzleSub }, true);
+    gunEffects.update(
+      elapsed,
+      shooting.snapshot,
+      battle.phase === 'idle' ? range.targets : [],
+      { main: muzzleMain, sub: muzzleSub },
+      true,
+    );
+    const bladeHand =
+      playerView.mode === 'first'
+        ? {
+            position: camera.position
+              .clone()
+              .add(
+                new THREE.Vector3(bladeSide() === 'sub' ? -0.42 : 0.42, -0.4, -0.7).applyQuaternion(
+                  camera.quaternion,
+                ),
+              ),
+            quaternion: camera.quaternion
+              .clone()
+              .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.55, 0, -0.2))),
+          }
+        : avatar.handPose(bladeSide() ?? 'main');
+    battleEffects.update(
+      elapsed,
+      battle.snapshot,
+      melee.snapshot,
+      body.snapshot,
+      playerBattleState(),
+      bladeHand,
+      !!bladeSide(),
+      playerView.avatarVisible,
+      playerView.mode === 'first',
+    );
     firingMenu.activate(selectedGun().type);
     firingPanel.render(!endedChallenge(), settings.bindings);
     document.body.classList.toggle('editing-fire', !!firingMenu.snapshot.type && firingMenu.snapshot.open);
@@ -1289,6 +1705,10 @@ window.__mikado = {
       objects: scene.children.length,
       player: { ...motor.state, view: playerView.diagnostics, avatar: avatar.diagnostics },
       combat: combat.snapshot,
+      battle: battle.snapshot,
+      body: body.snapshot,
+      melee: melee.snapshot,
+      battleEffects: battleEffects.diagnostics,
       shooting: shooting.snapshot,
       firingMenu: firingMenu.snapshot,
       range: range.snapshot,

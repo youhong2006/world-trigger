@@ -190,6 +190,42 @@ function addUniformCoat(model, humanoid) {
   coat.castShadow = false;coat.receiveShadow = true;coat.frustumCulled = false;
 }
 
+// Remove severed limb skin using actual bone weights, including the coat and shoes.
+function installBodyMask(root, uniform, humanoid = {}) {
+  root.traverse(object => {
+    if (!object.isSkinnedMesh) return;
+    const { skinIndex, skinWeight, position } = object.geometry.attributes;
+    if (!skinIndex || !skinWeight) return;
+    const categories = object.skeleton.bones.map(bone => {
+      for (let node = bone; node; node = node.parent) {
+        const name = node.name;
+        for (const [i, key, fallback] of [[0,'leftUpperArm','upperarml'],[1,'rightUpperArm','upperarmr'],[2,'leftUpperLeg','upperlegl'],[3,'rightUpperLeg','upperlegr']])
+          if (name === humanoid[key] || name === fallback) return i;
+      }
+      return -1;
+    });
+    const weights = new Float32Array(position.count * 4);
+    for (let v=0;v<position.count;v++) for(let j=0;j<4;j++) {
+      const category = categories[skinIndex.array[v*4+j]];
+      if (category >= 0) weights[v*4+category] += skinWeight.array[v*4+j];
+    }
+    object.geometry.setAttribute('limbWeights',new THREE.BufferAttribute(weights,4));
+    const convert = material => {
+      const result = material.clone(), previous = material.onBeforeCompile, key = material.customProgramCacheKey();
+      result.onBeforeCompile = shader => {
+        previous.call(result,shader);
+        shader.uniforms.severMask = { value: uniform };
+        shader.vertexShader = 'attribute vec4 limbWeights; varying vec4 vLimbWeights;\n' + shader.vertexShader;
+        shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvLimbWeights = limbWeights;');
+        shader.fragmentShader = 'uniform vec4 severMask; varying vec4 vLimbWeights;\n' + shader.fragmentShader;
+        shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>','#include <clipping_planes_fragment>\nif (dot(vLimbWeights,severMask) > 0.45) discard;');
+      };
+      result.customProgramCacheKey = () => key + '-combat-limb-mask-v1'; return result;
+    };
+    object.material = Array.isArray(object.material) ? object.material.map(convert) : convert(object.material);
+  });
+}
+
 // Source VRoid 0.x already faces -Z. Heading 0 faces -Z, PI/2 faces -X.
 export function createPlayerAvatar(scene) {
   const anchor = new THREE.Group();anchor.name = 'Playable humanoid';anchor.visible = false;scene.add(anchor);
@@ -198,17 +234,23 @@ export function createPlayerAvatar(scene) {
   const shadow = new THREE.Mesh(new THREE.CircleGeometry(.29, 24), new THREE.MeshBasicMaterial({ color: '#203529', transparent: true, opacity: .19, depthWrite: false }));
   shadow.rotation.x = -Math.PI / 2;shadow.visible = false;scene.add(shadow);
   let model = null, mixer = null, action = null, active = '', clock = 0, crouch = 0, chargeBlend=0, visibility = false, lastState = null;
+  const combatMirror=[];
   const feet = [], actions = new Map(), poseBones = [], armBones = [], animatedPose = new Map();
-  let handBone=null;const handPoint=new THREE.Vector3();
+  const severMask=new THREE.Vector4();installBodyMask(fallback.root,severMask);
+  let lastCombatSerial=-1;
+  let handBone=null,leftHandBone=null;const handPoint=new THREE.Vector3();
   const status = { model: MODEL.name, author: MODEL.author, source: MODEL.source, license: MODEL.license,
     loaded: false, loading: true, fallback: true, skinned: true, bones: fallback.bones.length,
     animations: [], active: 'idle', clip: 'procedural', height: PERSON.height, proportions: 'adult-anime', error: null };
   function setAction(state) {
-    const name = CLIPS[state.animation] ?? CLIPS.idle;
-    if (name !== active) {
+    const battle=state.battleAction;
+    const combatClip=battle?.phase==='attack'?'Sword_Attack':battle?.phase==='charge'||battle?.phase==='guard'?'Sword_Idle':battle?.phase==='dodge'?'Roll':battle?.phase==='stagger'?'Hit_Chest':state.bailout?'Death01':battle?.blade && (state.speed??0)<.1?'Sword_Idle':null;
+    const name = state.crouched&&!state.bailout ? (state.speed>.15?CLIPS['crouch-walk']:CLIPS.crouch) : combatClip && actions.has(combatClip) ? combatClip : CLIPS[state.animation] ?? CLIPS.idle;
+    if (name !== active || combatClip && battle?.serial !== lastCombatSerial) {
+      lastCombatSerial=battle?.serial;
       const next = actions.get(name) ?? actions.get(CLIPS.idle);
       if (!next) return;
-      const single = name === 'Jump_Start' || name === 'Jump_Land';
+      const single = ['Jump_Start','Jump_Land','Sword_Attack','Roll','Hit_Chest','Death01'].includes(name);
       next.reset().setLoop(single ? THREE.LoopOnce : THREE.LoopRepeat, single ? 1 : Infinity);
       next.clampWhenFinished = single;next.enabled = true;next.setEffectiveWeight(1).play();
       if (action && action !== next) next.crossFadeFrom(action, .14, false);
@@ -218,7 +260,8 @@ export function createPlayerAvatar(scene) {
     const rate = state.animation === 'walk' ? clamp(speed / PERSON.walkSpeed, .65, 1.6)
       : state.animation === 'run' ? clamp(speed / PERSON.sprintSpeed, .75, 1.7)
       : state.animation === 'crouch-walk' ? clamp(speed / 1.15, .6, 1.5) : 1;
-    action?.setEffectiveTimeScale(rate);status.clip = active;
+    const duration=battle?.phase==='attack'?(battle.move==='heavy'?.86:battle.move==='light3'?.71:.48):battle?.phase==='dodge'?.36:battle?.phase==='stagger'?.35:0;
+    action?.setEffectiveTimeScale(duration ? action.getClip().duration/duration : rate);status.clip = active;
   }
   function alignFeet() {
     if (!model) return;
@@ -231,7 +274,9 @@ export function createPlayerAvatar(scene) {
     if (Number.isFinite(minY)) visual.position.y = anchor.position.y - minY;
   }
   function update(dt, state) {
-    lastState = state;clock += Math.min(Math.max(dt, 0), .25);
+    lastState = state;
+    const parts=state.body?.parts??{};severMask.set(Number(!!parts.leftArm?.destroyed),Number(!!parts.rightArm?.destroyed),Number(!!parts.leftLeg?.destroyed),Number(!!parts.rightLeg?.destroyed));
+    clock += Math.min(Math.max(dt, 0), .25);
     anchor.position.copy(state.position);anchor.rotation.y = state.heading ?? 0;
     crouch = THREE.MathUtils.damp(crouch, state.crouched ? 1 : 0, 12, dt);
     chargeBlend=THREE.MathUtils.damp(chargeBlend,state.charging||state.aiming?1:0,16,dt);
@@ -248,6 +293,10 @@ export function createPlayerAvatar(scene) {
       if(chargeBlend>.001 && armBones.length===2) {
         armBones[0].rotateX((-.65-(state.aimPitch??0)*.5)*chargeBlend);armBones[0].rotateZ(-.55*chargeBlend);armBones[1].rotateX(-1.1*chargeBlend);
       }
+      const battle=state.battleAction;
+      if(state.bladeSide==='sub'&&['attack','charge','guard'].includes(battle?.phase)) {for(const [left,right]of combatMirror){const saved=left.quaternion.clone();left.quaternion.copy(right.quaternion);left.quaternion.y*=-1;left.quaternion.z*=-1;right.quaternion.copy(saved);right.quaternion.y*=-1;right.quaternion.z*=-1;}}
+      if(state.crouched&&['attack','charge','guard'].includes(battle?.phase)&&armBones.length===2){const upper=state.bladeSide==='sub'?combatMirror.find(([l,r])=>r===armBones[0])?.[0]:armBones[0],lower=state.bladeSide==='sub'?combatMirror.find(([l,r])=>r===armBones[1])?.[0]:armBones[1];upper?.rotateX(-1.2+(battle.phase==='attack'?Math.sin(battle.elapsed*8)*1.1:0));lower?.rotateX(-.7);}
+      if(battle?.phase==='attack'&&armBones.length===2){const pulse=Math.sin(Math.min(1,battle.elapsed/(battle.move==='heavy'?.86:.48))*Math.PI);if(battle.move==='heavy')armBones[0].rotateX(-.35*pulse);if(battle.move==='light2')poseBones[1]?.rotateY(.25*pulse);}
       alignFeet();
     }
     else {
@@ -269,9 +318,10 @@ export function createPlayerAvatar(scene) {
     for (const name of ['spine', 'chest', 'head']) {
       const bone = model.getObjectByName(humanoid[name]);if (bone) poseBones.push(bone);
     }
-    handBone=model.getObjectByName(humanoid.rightHand);
+    for(const suffix of ['Shoulder','UpperArm','LowerArm','Hand']){const left=model.getObjectByName(humanoid['left'+suffix]),right=model.getObjectByName(humanoid['right'+suffix]);if(left&&right)combatMirror.push([left,right]);}
+    handBone=model.getObjectByName(humanoid.rightHand);leftHandBone=model.getObjectByName(humanoid.leftHand);
     for(const name of ['rightUpperArm','rightLowerArm']) {const bone=model.getObjectByName(humanoid[name]);if(bone)armBones.push(bone);}
-    model.updateMatrixWorld(true);animeMaterials(model);addUniformCoat(model, humanoid);
+    model.updateMatrixWorld(true);animeMaterials(model);addUniformCoat(model, humanoid);installBodyMask(model,severMask,humanoid);
     let boneCount = 0;
     model.traverse(object => {
       if (object.isBone) boneCount++;
@@ -306,10 +356,15 @@ export function createPlayerAvatar(scene) {
   });
   function setVisible(value) { visibility = !!value;anchor.visible = visibility;shadow.visible = visibility && !!lastState?.grounded; }
   return { ready, update, setVisible,
+    handPose(side='main') {
+      anchor.updateMatrixWorld(true);
+      const bone=(side==='sub'?leftHandBone:handBone)??fallback.bones.find(b=>b.name===(side==='sub'?'handl':'handr'));
+      return {position:bone.getWorldPosition(new THREE.Vector3()),quaternion:bone.getWorldQuaternion(new THREE.Quaternion())};
+    },
     handPosition() {
       anchor.updateMatrixWorld(true);
       const bone=handBone??fallback.bones.find(b=>b.name==='handr');
       return bone.getWorldPosition(handPoint);
     },
-    get diagnostics() { return { ...status, visible: visibility, crouchBlend: crouch }; } };
+    get diagnostics() { return { ...status, visible: visibility, crouchBlend: crouch, severed: severMask.toArray() }; } };
 }

@@ -38,16 +38,25 @@ export const TRIGGERS = Object.freeze({
     cost: 1,
     available: true,
     kind: '射擊',
-    description: '保留發射選項，目前使用小行星直射規則；爆炸效果稍後調整。',
+    description: '撞擊後爆炸，對範圍內沒有掩體阻隔的目標造成衰減傷害。',
   },
   blade: {
     name: '刀劍',
     english: 'BLADE',
-    available: false,
+    available: true,
+    cost: 0.2,
     kind: '近戰',
-    description: '連擊、格擋與招架規劃中。',
+    description: '三段輕擊、蓄力重擊、空中斬擊；右鍵格擋，起手短時間可招架。',
   },
-  shield: { name: '盾', english: 'SHIELD', available: false, kind: '防禦', description: '能量防禦規劃中。' },
+  shield: {
+    name: '盾',
+    english: 'SHIELD',
+    available: true,
+    cost: 0.35,
+    kind: '防禦',
+    description: '按住防禦鍵展開前方護盾，持續消耗及受擊消耗三離子。',
+  },
+  dodge: { name: '閃避', available: true, cost: 0.3, kind: '動作' },
 });
 export function createCombatCore({ maximum = 100, recovery = 1.5, recoveryDelay = 1.8 } = {}) {
   maximum = Number.isFinite(maximum) ? Math.max(1, maximum) : 100;

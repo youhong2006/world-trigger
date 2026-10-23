@@ -44,8 +44,8 @@ test('the imported face has adult proportions and gameplay uses the requested 1.
   assert.ok(PERSON.height - PERSON.eyeHeight >= .1);
 });
 
-test('all eight movement states have valid retargeted clips and no horizontal root travel', () => {
-  const expected = ['Idle_Loop', 'Walk_Loop', 'Sprint_Loop', 'Jump_Start', 'Jump_Loop', 'Jump_Land', 'Crouch_Idle_Loop', 'Crouch_Fwd_Loop'];
+test('locomotion and combat clips have valid retargeted joints and no horizontal root travel', () => {
+  const expected = ['Idle_Loop', 'Walk_Loop', 'Sprint_Loop', 'Jump_Start', 'Jump_Loop', 'Jump_Land', 'Crouch_Idle_Loop', 'Crouch_Fwd_Loop','Sword_Attack','Sword_Idle','Roll','Hit_Chest','Hit_Head','Death01'];
   assert.deepEqual(gltf.animations.map(clip => clip.name).sort(), expected.sort());
   const hips = gltf.nodes.findIndex(node => node.name === gltf.scenes[0].extras.humanoid.hips);
   for (const clip of gltf.animations) {

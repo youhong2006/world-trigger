@@ -76,7 +76,7 @@ test('loadout bounds and unavailable storage do not break live equipment', () =>
   assert.equal(armory.add(), false);
   assert.equal(armory.snapshot.profiles.length, 6);
   assert.equal(armory.snapshot.saved, false);
-  assert.equal(armory.equip('main', 1, 'blade'), false);
+  assert.equal(armory.equip('main', 1, 'blade'), true);
   assert.equal(armory.selectSlot('sub', 4), false);
   assert.equal(armory.configure('meteor', { range: 300 }), true);
   assert.equal(armory.profile.weapons.meteor.range, 300);

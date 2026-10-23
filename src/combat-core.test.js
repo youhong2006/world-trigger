@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCombatCore } from './combat-core.js';
-test('preparing can be cancelled for free, valid casts consume once and future weapons stay unavailable', () => {
+test('preparing can be cancelled for free, valid casts consume once and unknown triggers stay unavailable', () => {
   const core = createCombatCore();
-  assert.equal(core.begin('blade'), false);
+  assert.equal(core.begin('unknown'), false);
   assert.equal(core.begin('grasshopper'), true);
   assert.equal(core.begin('grasshopper'), false);
   core.cancel();

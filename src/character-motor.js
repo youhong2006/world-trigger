@@ -114,7 +114,7 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
     if (grounded) coyote = CHARACTER.coyoteTime;
     else coyote = Math.max(0, coyote - dt);
     if (jumpBuffer > 0 && coyote > 0) {
-      velocity.y = tuning.jumpSpeed;
+      velocity.y = tuning.jumpSpeed * clamp(Number.isFinite(input.jumpScale) ? input.jumpScale : 1, 0, 1);
       grounded = false;coyote = jumpBuffer = landing = 0;
     }
 
@@ -122,7 +122,7 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
     let strafe = clamp(Number(input.strafe) || 0, -1, 1);
     const magnitude = Math.hypot(forward, strafe);
     if (magnitude > 1) { forward /= magnitude;strafe /= magnitude; }
-    const desiredSpeed = crouched ? CHARACTER.crouchSpeed : input.sprint && forward > 0 ? tuning.sprintSpeed : tuning.walkSpeed;
+    const desiredSpeed = (crouched ? CHARACTER.crouchSpeed : input.sprint && forward > 0 ? tuning.sprintSpeed : tuning.walkSpeed) * clamp(Number.isFinite(input.speedScale) ? input.speedScale : 1, 0, 1);
     const targetX = (-Math.sin(yaw) * forward + Math.cos(yaw) * strafe) * desiredSpeed;
     const targetZ = (-Math.cos(yaw) * forward - Math.sin(yaw) * strafe) * desiredSpeed;
     const response = grounded ? (magnitude > 0 ? 16 : 20) : boostTime > 0 ? (magnitude > 0 ? .65 : .03) : magnitude > 0 ? 3.4 : .25;
@@ -130,6 +130,7 @@ export function createCharacterMotor({ groundHeight, collision = {} }) {
     velocity.x += (targetX - velocity.x) * alpha;
     velocity.z += (targetZ - velocity.z) * alpha;
     // Axis-separated checks preserve movement parallel to a wall.
+    if (input.dash) { velocity.x = input.dash.x; velocity.z = input.dash.z; }
     moveAxis('x', velocity.x * dt);
     moveAxis('z', velocity.z * dt);
 

@@ -1,6 +1,6 @@
 export const ARMORY_KEY = 'mikado-armory-v1';
 export const SHOOTING_TYPES = ['asteroid', 'viper', 'hound', 'meteor'];
-export const EQUIPPABLE = ['grasshopper', ...SHOOTING_TYPES];
+export const EQUIPPABLE = ['grasshopper', 'blade', 'shield', ...SHOOTING_TYPES];
 export const FIRE_DEFAULTS = Object.freeze({
   count: 8,
   damage: 8,

@@ -171,9 +171,11 @@ export function createShootingVisuals(scene, collision) {
           );
       });
     }
+    for (const entry of targetGroups.values()) entry.group.visible = false;
     for (const t of targets) {
       const entry = targetGroups.get(t.id);
       if (!entry) continue;
+      entry.group.visible = true;
       entry.core.visible = t.health > 0;
       entry.ring.material = t.health > 0 ? cyan : faint;
       entry.cage.material.opacity = t.health > 0 ? 0.16 : 0.04;

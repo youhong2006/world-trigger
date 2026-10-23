@@ -9,6 +9,7 @@ import {
   saveSettings,
   SETTINGS_KEY,
 } from './game-settings.js';
+import { MISSION_MODES, DIFFICULTIES } from './battle-session.js';
 import { EQUIPPABLE, SHOOTING_TYPES, FIRE_RANGES, shotCost } from './armory.js';
 import { samplePolyline } from './trajectory-plan.js';
 import { TRIGGERS } from './combat-core.js';
@@ -32,6 +33,8 @@ const labels = {
   hudScale: 'HUD 大小',
   hudOpacity: 'HUD 不透明度',
   glow: '三離子光暈強度',
+  cameraShake: '戰鬥鏡頭震動',
+  hitFlash: '受擊畫面光暈',
 };
 const checks = {
   muted: '全部靜音',
@@ -82,7 +85,17 @@ const selectLabels = {
 const categories = {
   操作: ['sensitivity', 'aimSensitivity', 'invertY', 'sprintToggle', 'crouchToggle'],
   移動: ['walkSpeed', 'runSpeed', 'jumpSpeed', 'boostSpeed'],
-  鏡頭: ['cameraMode', 'fov', 'cameraDistance', 'shoulder', 'cameraSmooth', 'speedFov', 'reducedMotion'],
+  鏡頭: [
+    'cameraMode',
+    'fov',
+    'cameraDistance',
+    'shoulder',
+    'cameraSmooth',
+    'speedFov',
+    'reducedMotion',
+    'cameraShake',
+    'hitFlash',
+  ],
   畫質: ['quality', 'resolution', 'shadows', 'detailDistance', 'fpsLimit'],
   聲音: ['masterVolume', 'ambientVolume', 'effectsVolume', 'muted', 'muteOnBlur'],
   介面: ['hudScale', 'hudOpacity', 'crosshair', 'glow', 'minimap', 'hints', 'showFps'],
@@ -108,6 +121,9 @@ export function createGameUI({
   storage,
   armory,
   onStartChallenge,
+  onStartBattle,
+  getBattleRecords,
+  onBattleRecords,
   onSettings,
   onPause,
   onResume,
@@ -272,7 +288,11 @@ export function createGameUI({
         }
       };
       $('#export-settings').onclick = () => {
-        const data = JSON.stringify({ version: 2, settings, drafts, armory: armory.snapshot }, null, 2),
+        const data = JSON.stringify(
+            { version: 3, settings, drafts, armory: armory.snapshot, battleRecords: getBattleRecords?.() },
+            null,
+            2,
+          ),
           url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
         const a = document.createElement('a');
         a.href = url;
@@ -290,6 +310,7 @@ export function createGameUI({
           settings = normalizeSettings(data.settings);
           if (data.drafts) drafts = cleanDraft(data.drafts);
           if (data.armory) armory.import(data.armory);
+          if (data.battleRecords) onBattleRecords?.(data.battleRecords);
           saveTactics();
           persist();
           renderSettings();
@@ -305,10 +326,10 @@ export function createGameUI({
       p = armory.profile,
       cfg = p.weapons[weaponType];
     const slotSide = (side, title) =>
-      `<section class="slot-side"><h4>${title}<small>同時啟動一項</small></h4>${p[side].map((id, i) => `<div class="slot-row ${p[side === 'main' ? 'activeMain' : 'activeSub'] === i ? 'selected' : ''}"><button data-active-side="${side}" data-active-index="${i}" title="啟動此槽位"><kbd>${keyLabel(settings.bindings['slot' + (i + (side === 'main' ? 1 : 5))])}</kbd></button><select data-slot-side="${side}" data-slot-index="${i}" aria-label="${title}槽位 ${i + 1}"><option value="">空槽</option>${EQUIPPABLE.map((t) => `<option value="${t}" ${t === id ? 'selected' : ''}>${TRIGGERS[t].name}${t === 'meteor' ? '（直射測試）' : ''}</option>`).join('')}</select></div>`).join('')}<button data-fire-side="${side}" class="side-focus ${p.fireSide === side ? 'selected' : ''}">${p.fireSide === side ? '● 目前射擊側' : '設為射擊側'}</button></section>`;
+      `<section class="slot-side"><h4>${title}<small>同時啟動一項</small></h4>${p[side].map((id, i) => `<div class="slot-row ${p[side === 'main' ? 'activeMain' : 'activeSub'] === i ? 'selected' : ''}"><button data-active-side="${side}" data-active-index="${i}" title="啟動此槽位"><kbd>${keyLabel(settings.bindings['slot' + (i + (side === 'main' ? 1 : 5))])}</kbd></button><select data-slot-side="${side}" data-slot-index="${i}" aria-label="${title}槽位 ${i + 1}"><option value="">空槽</option>${EQUIPPABLE.map((t) => `<option value="${t}" ${t === id ? 'selected' : ''}>${TRIGGERS[t].name}</option>`).join('')}</select></div>`).join('')}<button data-fire-side="${side}" class="side-focus ${p.fireSide === side ? 'selected' : ''}">${p.fireSide === side ? '● 目前射擊側' : '設為射擊側'}</button></section>`;
     const numeric = (key, label, unit = '') =>
       `<label class="weapon-field"><span>${label}</span><input type="range" data-fire-param="${key}" min="${FIRE_RANGES[key][0]}" max="${FIRE_RANGES[key][1]}" step="${['damage', 'speed', 'range'].includes(key) ? 1 : 0.01}" value="${cfg[key]}"><output>${Number(cfg[key]).toFixed(['damage', 'speed', 'range'].includes(key) ? 0 : 2)}${unit}</output></label>`;
-    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">TRIGGER LOADOUT / LIVE</span><h3>自由配裝</h3><p>主、副各四槽，兩側各啟動一項。按數字鍵切換槽位，F 切換射擊側。</p></div><div class="profile-toolbar"><label>配置<select id="kit-choice">${state.profiles.map((kit) => `<option value="${esc(kit.id)}" ${kit.id === p.id ? 'selected' : ''}>${esc(kit.name)}</option>`).join('')}</select></label><label>名稱<input id="kit-name" maxlength="30" value="${esc(p.name)}"></label><button id="kit-add">＋ 複製配置</button><button id="kit-remove" ${state.profiles.length <= 1 ? 'disabled' : ''}>刪除配置</button></div><div class="slots-layout">${slotSide('main', '主側')}${slotSide('sub', '副側')}</div><div class="weapon-heading"><h4>彈種參數</h4><select id="weapon-type">${SHOOTING_TYPES.map((type) => `<option value="${type}" ${type === weaponType ? 'selected' : ''}>${TRIGGERS[type].name}</option>`).join('')}</select><span id="weapon-cost">每批發射 ${shotCost(cfg).toFixed(0)} 三離子</span></div>${weaponType === 'meteor' ? '<p class="special-notice">美特拉目前使用普通直射，爆炸效果待後續調整。</p>' : ['viper', 'hound'].includes(weaponType) ? '<p class="panel-note">場景右側提供專屬發射選單。前進側鍵進入、返回側鍵退出；滾輪選到的選項立即用於發射，不需確認。</p>' : ''}<div class="weapon-fields"><label class="weapon-field"><span>立方體分割</span><select id="weapon-count">${[1, 8, 27].map((n) => `<option value="${n}" ${cfg.count === n ? 'selected' : ''}>${n} 發</option>`).join('')}</select></label><label class="weapon-field"><span>發射方式</span><select id="weapon-mode"><option value="volley" ${cfg.mode === 'volley' ? 'selected' : ''}>齊射</option><option value="burst" ${cfg.mode === 'burst' ? 'selected' : ''}>依序分批</option></select></label>${numeric('damage', '每發傷害')}${numeric('speed', '彈速', ' m/s')}${numeric('range', '射程', ' m')}${numeric('spread', '散射角度', '°')}${numeric('delay', '釋放延遲', ' s')}${numeric('interval', '分批間隔', ' s')}<label class="weapon-field"><span>瞄準方式</span><select id="weapon-aim"><option value="manual" ${cfg.aim === 'manual' ? 'selected' : ''}>手動準星</option><option value="assist" ${cfg.aim === 'assist' ? 'selected' : ''}>輔助瞄準（需按住瞄準）</option></select></label><label class="weapon-field"><span>自訂彈道路線</span><select id="weapon-path"><option value="">未指定</option>${cfg.pathId && !drafts.paths.some((path) => path.id === cfg.pathId) ? `<option value="${esc(cfg.pathId)}" selected>原路線已刪除，請重選</option>` : ''}${drafts.paths.map((path) => `<option value="${esc(path.id)}" ${cfg.pathId === path.id ? 'selected' : ''}>${esc(path.name)}</option>`).join('')}</select></label></div><p class="panel-note">配置即時生效並自動保存，最多 6 套。每批發射扣 1 點；生成、分割與調參免費。切換該側裝備會收起未射出的立方體。毒蛇可使用自訂路線，小行星保持直射。</p><div class="storage-status">${state.saved ? '● 配置已保存至此瀏覽器' : '⚠ 無法永久保存，本次配置仍生效'}</div>`;
+    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">TRIGGER LOADOUT / LIVE</span><h3>自由配裝</h3><p>主、副各四槽，兩側各啟動一項。按數字鍵切換槽位，F 切換射擊側。</p></div><div class="profile-toolbar"><label>配置<select id="kit-choice">${state.profiles.map((kit) => `<option value="${esc(kit.id)}" ${kit.id === p.id ? 'selected' : ''}>${esc(kit.name)}</option>`).join('')}</select></label><label>名稱<input id="kit-name" maxlength="30" value="${esc(p.name)}"></label><button id="kit-add">＋ 複製配置</button><button id="kit-remove" ${state.profiles.length <= 1 ? 'disabled' : ''}>刪除配置</button></div><div class="slots-layout">${slotSide('main', '主側')}${slotSide('sub', '副側')}</div><div class="weapon-heading"><h4>彈種參數</h4><select id="weapon-type">${SHOOTING_TYPES.map((type) => `<option value="${type}" ${type === weaponType ? 'selected' : ''}>${TRIGGERS[type].name}</option>`).join('')}</select><span id="weapon-cost">每批發射 ${shotCost(cfg).toFixed(0)} 三離子</span></div>${weaponType === 'meteor' ? '<p class="special-notice">美特拉撞擊後產生 6 m 爆炸，傷害隨距離衰減，掩體可阻擋爆風。分割增加覆蓋，但發射仍只扣每批 1 點。</p>' : ['viper', 'hound'].includes(weaponType) ? '<p class="panel-note">場景右側提供專屬發射選單。前進側鍵進入、返回側鍵退出；滾輪選到的選項立即用於發射，不需確認。</p>' : ''}<div class="weapon-fields"><label class="weapon-field"><span>立方體分割</span><select id="weapon-count">${[1, 8, 27].map((n) => `<option value="${n}" ${cfg.count === n ? 'selected' : ''}>${n} 發</option>`).join('')}</select></label><label class="weapon-field"><span>發射方式</span><select id="weapon-mode"><option value="volley" ${cfg.mode === 'volley' ? 'selected' : ''}>齊射</option><option value="burst" ${cfg.mode === 'burst' ? 'selected' : ''}>依序分批</option></select></label>${numeric('damage', '每發傷害')}${numeric('speed', '彈速', ' m/s')}${numeric('range', '射程', ' m')}${numeric('spread', '散射角度', '°')}${numeric('delay', '釋放延遲', ' s')}${numeric('interval', '分批間隔', ' s')}<label class="weapon-field"><span>瞄準方式</span><select id="weapon-aim"><option value="manual" ${cfg.aim === 'manual' ? 'selected' : ''}>手動準星</option><option value="assist" ${cfg.aim === 'assist' ? 'selected' : ''}>輔助瞄準（需按住瞄準）</option></select></label><label class="weapon-field"><span>自訂彈道路線</span><select id="weapon-path"><option value="">未指定</option>${cfg.pathId && !drafts.paths.some((path) => path.id === cfg.pathId) ? `<option value="${esc(cfg.pathId)}" selected>原路線已刪除，請重選</option>` : ''}${drafts.paths.map((path) => `<option value="${esc(path.id)}" ${cfg.pathId === path.id ? 'selected' : ''}>${esc(path.name)}</option>`).join('')}</select></label></div><p class="panel-note">配置即時生效並自動保存，最多 6 套。每批發射扣 1 點；生成、分割與調參免費。切換該側裝備會收起未射出的立方體。毒蛇可使用自訂路線，小行星保持直射。</p><div class="storage-status">${state.saved ? '● 配置已保存至此瀏覽器' : '⚠ 無法永久保存，本次配置仍生效'}</div>`;
     $('#kit-choice').onchange = (e) => {
       armory.choose(e.target.value);
       renderLoadout();
@@ -561,6 +582,60 @@ export function createGameUI({
       }
     };
   }
+  function renderMissions() {
+    let options = { mode: 'waves', difficulty: 'normal' };
+    try {
+      const saved = JSON.parse(storage.getItem('mikado-mission-options') ?? '{}');
+      if (Object.hasOwn(MISSION_MODES, saved.mode)) options.mode = saved.mode;
+      if (Object.hasOwn(DIFFICULTIES, saved.difficulty)) options.difficulty = saved.difficulty;
+    } catch {}
+    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">SOLO / COMBAT OPERATIONS</span><h3>選擇作戰任務</h3><p>以目前配裝出擊，或建立一套刀劍與射擊混合配置。</p></div><div class="mission-options"><label>任務<select id="mission-mode">${Object.entries(
+      MISSION_MODES,
+    )
+      .map(([id, name]) => `<option value="${id}" ${options.mode === id ? 'selected' : ''}>${name}</option>`)
+      .join('')}</select></label><label>難度<select id="mission-difficulty">${Object.entries(DIFFICULTIES)
+      .map(
+        ([id, d]) =>
+          `<option value="${id}" ${options.difficulty === id ? 'selected' : ''}>${d.name}</option>`,
+      )
+      .join(
+        '',
+      )}</select></label></div><div class="guide-cards"><article><b>防衛波次</b><p>清除三波近戰、遠程、裝甲與高速型三離子兵，受損狀態會保留到任務結束。</p></article><article><b>巡邏清剿</b><p>前往三個青色巡邏光環，各區觸發一組敵人，全部擊破即可完成。</p></article><article><b>核心討伐</b><p>擊破重裝指揮核心與護衛。亮青色弱點承受額外傷害；注意橘色攻擊預兆。</p></article></div><div class="pause-actions"><button class="primary" id="deploy-battle">以目前配裝出擊 ↗</button><button id="combat-preset">建立「近戰混合」配裝</button><button id="mission-loadout">自由配裝</button></div><p class="panel-note">兩側各啟動一項。混合配裝：主側 1 刀劍、2 小行星、3 毒蛇、4 美特拉；副側 5 盾、6 蚱蜢、7 獵犬。X 防禦、G 蓄力重擊、Alt 方向閃避、B 緊急脫離。閃避沒有無敵時間，恢復不修復斷肢。作戰範圍以青色圓環標示，離開 12 秒會脫離。完整操作以鍵盤滑鼠為主。</p><p id="mission-best" class="storage-status"></p>`;
+    function changed() {
+      options = { mode: $('#mission-mode').value, difficulty: $('#mission-difficulty').value };
+      try {
+        storage.setItem('mikado-mission-options', JSON.stringify(options));
+      } catch {}
+      const record = getBattleRecords?.()[`${options.mode}:${options.difficulty}`];
+      $('#mission-best').textContent = record
+        ? `最佳 ${record.score} 分 · ${record.time.toFixed(1)} s`
+        : '尚無此任務的通關紀錄';
+    }
+    $('#mission-mode').onchange = changed;
+    $('#mission-difficulty').onchange = changed;
+    changed();
+    $('#deploy-battle').onclick = () => {
+      close();
+      onStartBattle(options);
+    };
+    $('#mission-loadout').onclick = () => setTab('loadout');
+    $('#combat-preset').onclick = () => {
+      if (!armory.add()) {
+        notify('配置已達 6 套，先刪除一套再建立混合配裝');
+        return;
+      }
+      armory.rename('近戰混合');
+      for (const [side, list] of Object.entries({
+        main: ['blade', 'asteroid', 'viper', 'meteor'],
+        sub: ['shield', 'grasshopper', 'hound', null],
+      }))
+        list.forEach((id, n) => armory.equip(side, n, id));
+      armory.selectSlot('main', 0);
+      armory.selectSlot('sub', 0);
+      armory.setSide('main');
+      notify('已建立近戰混合配裝 · 6 啟動蚱蜢、5 切回盾');
+    };
+  }
   function render() {
     dialog.querySelectorAll('[data-tab]').forEach((b) => {
       b.classList.toggle('active', b.dataset.tab === tab);
@@ -578,8 +653,12 @@ export function createGameUI({
       renderPath();
       return;
     }
+    if (tab === 'missions') {
+      renderMissions();
+      return;
+    }
     if (tab === 'guide') {
-      content.innerHTML = `<div class="panel-heading"><span class="eyebrow">FIELD MANUAL</span><h3>射擊與機動指南</h3><p>E 生成懸浮立方體、右鍵分割、左鍵發射、中鍵瞄準；射擊時也能使用蚱蜢移動。</p></div><div class="guide-cards"><article><b>射擊 / 生成與發射</b><p>E 生成立方體懸浮在角色側邊；右鍵循環分割 1／8／27 發，左鍵釋放當前彈組，中鍵按住瞄準。生成與分割免費，發射每批扣 1 點。</p></article><article><b>配裝 / 主副側</b><p>1–4 切主槽、5–8 切副槽，F 切換射擊側。Q 使用目前啟動的蚱蜢；兩側各啟動一項。配裝與按鍵均可自訂。毒蛇／獵犬使用前進側鍵（或 ]）進入右側選單、返回側鍵（或 [）退一層。滾輪選項即時生效，不需確認。</p></article><article><b>01 / 準備與放置</b><p>按住 <kbd>${keyLabel(settings.bindings.grasshopper)}</kbd>，手中出現亮青色光球。地面放開後，跳板生成在前方；走上去才會彈射。</p></article><article><b>02 / 方向與空中接續</b><p>踩中時按住方向鍵，沿該方向微微向上彈射。沒有方向輸入則垂直向上。空中放開觸發鍵，立即在腳下彈射。</p></article><article><b>03 / 三離子與跳板</b><p>每次成功施放消耗 0.3 三離子，12 秒未使用便消失。跳板只能用一次。停止施放後會少量恢復；耗盡時返回起點重整。</p></article><article><b>04 / 暫停與操作</b><p>Esc 開啟暫停選單，F2 開設定；Tab 釋放游標，點場景繼續環顧。切換視窗時自動暫停。可在設定自訂按鍵、速度及畫質。</p></article></div><dl class="guide-bindings">${Object.entries(
+      content.innerHTML = `<div class="panel-heading"><span class="eyebrow">FIELD MANUAL</span><h3>作戰與機動指南</h3><p>E 生成懸浮立方體、右鍵分割、左鍵發射、中鍵瞄準；射擊時也能使用蚱蜢移動。</p></div><div class="guide-cards"><article><b>近戰 / 招架與閃避</b><p>啟動刀劍槽位後左鍵三段輕擊，G 按住蓄力、放開重擊，空中自動使用空斬。右鍵持續格擋，起手 0.18 秒可招架正面攻擊並使敵人失衡；X 可使用已啟動的盾。Alt + 方向鍵閃避，沒有無敵時間。起手與出招期間不能任意切刀或取消，收招後段可接蚱蜢與閃避。</p></article><article><b>戰鬥體 / 部位與脫離</b><p>斷臂停用對應側裝備；斷腿降低移動與跳躍。傷勢持續洩漏三離子，回復不修復身體。頭部／核心破壞或能量耗盡會緊急脫離，也可按 B 主動撤出。R 重試時重整。擊中敵人發光核心可增加傷害，橘色提示代表即將攻擊；裝甲型可用重擊突破。</p></article><article><b>射擊 / 生成與發射</b><p>E 生成立方體懸浮在角色側邊；右鍵循環分割 1／8／27 發，左鍵釋放當前彈組，中鍵按住瞄準。生成與分割免費，發射每批扣 1 點。</p></article><article><b>配裝 / 主副側</b><p>1–4 切主槽、5–8 切副槽，F 切換射擊側。Q 使用目前啟動的蚱蜢；兩側各啟動一項。配裝與按鍵均可自訂。毒蛇／獵犬使用前進側鍵（或 ]）進入右側選單、返回側鍵（或 [）退一層。滾輪選項即時生效，不需確認。</p></article><article><b>01 / 準備與放置</b><p>按住 <kbd>${keyLabel(settings.bindings.grasshopper)}</kbd>，手中出現亮青色光球。地面放開後，跳板生成在前方；走上去才會彈射。</p></article><article><b>02 / 方向與空中接續</b><p>踩中時按住方向鍵，沿該方向微微向上彈射。沒有方向輸入則垂直向上。空中放開觸發鍵，立即在腳下彈射。</p></article><article><b>03 / 三離子與跳板</b><p>每次成功施放消耗 0.3 三離子，12 秒未使用便消失。跳板只能用一次。停止施放後會少量恢復；耗盡時返回起點重整。</p></article><article><b>04 / 暫停與操作</b><p>Esc 開啟暫停選單，F2 開設定；Tab 釋放游標，點場景繼續環顧。切換視窗時自動暫停。可在設定自訂按鍵、速度及畫質。</p></article></div><dl class="guide-bindings">${Object.entries(
         ACTIONS,
       )
         .map(([id, name]) => `<dt><kbd>${keyLabel(settings.bindings[id])}</kbd></dt><dd>${name}</dd>`)
@@ -588,13 +667,14 @@ export function createGameUI({
         )}</dl><p class="panel-note">步行涉水會返回起點；可用蚱蜢從空中跨河。手機可瀏覽場景與設定，完整操作以桌面鍵盤滑鼠為主。<br><a href="./models/avatar/ATTRIBUTION.md" target="_blank" rel="noopener">角色模型與動畫授權 ↗</a></p>`;
       return;
     }
-    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">FIELD EXERCISE PAUSED</span><h3>準備下一次躍進。</h3><p>調整配置，或回到城市繼續練習。</p></div><div class="pause-banner"><div class="orbit-symbol" aria-hidden="true">◈</div><span>MIKADO / MOBILITY TRAINING</span><strong>小行星射擊演習</strong><p>第三人稱 · 立方體射擊 · 蚱蜢機動</p></div><div class="pause-actions"><button class="primary" id="resume-play">繼續 / 回到場景 ↗</button><button id="start-range-play">開始射擊挑戰</button><button id="reset-play">返回起點／重試</button><button id="leave-play">返回城市總覽</button></div><p class="panel-note">射擊挑戰使用非敵人的固定練習靶。90 秒內擊破六靶，可查看成績與重新挑戰；本次不加入 AI。</p>`;
+    content.innerHTML = `<div class="panel-heading"><span class="eyebrow">FIELD EXERCISE PAUSED</span><h3>準備下一次躍進。</h3><p>調整配置，或回到城市繼續練習。</p></div><div class="pause-banner"><div class="orbit-symbol" aria-hidden="true">◈</div><span>MIKADO / MOBILITY TRAINING</span><strong>小行星射擊演習</strong><p>第三人稱 · 立方體射擊 · 蚱蜢機動</p></div><div class="pause-actions"><button class="primary" id="resume-play">繼續 / 回到場景 ↗</button><button id="open-missions">單人作戰任務</button><button id="start-range-play">開始射擊挑戰</button><button id="reset-play">返回起點／重試</button><button id="leave-play">返回城市總覽</button></div><p class="panel-note">射擊挑戰使用非敵人的固定練習靶。90 秒內擊破六靶，可查看成績與重新挑戰；單人作戰可選防衛波次、巡邏清剿及核心討伐；四類敵人支援地面與對空攻擊。</p>`;
     const best = armory.snapshot.best;
     if (best)
       content.insertAdjacentHTML(
         'beforeend',
         `<p class="storage-status">最佳成績 ${Math.round(best.score)} 分 · ${best.time.toFixed(1)} s · 命中率 ${Math.round(best.accuracy * 100)}%</p>`,
       );
+    $('#open-missions').onclick = () => setTab('missions');
     $('#resume-play').onclick = close;
     $('#start-range-play').onclick = () => {
       close();

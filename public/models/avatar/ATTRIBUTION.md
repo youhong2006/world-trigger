@@ -15,12 +15,12 @@
 - Official page: https://quaternius.itch.io/universal-animation-library
 - Source mirror: https://github.com/J-Ponzo/gltf-universal-animation-library/tree/e24c23cf2a1323488a3faa226ea7ea21f644b73e
 - Original CC0 license: https://github.com/J-Ponzo/gltf-universal-animation-library/blob/e24c23cf2a1323488a3faa226ea7ea21f644b73e/LICENSE
-- Included motions: Idle_Loop, Walk_Loop, Sprint_Loop, Jump_Start, Jump_Loop, Jump_Land, Crouch_Idle_Loop, Crouch_Fwd_Loop.
+- Included motions: Idle_Loop, Walk_Loop, Sprint_Loop, Jump_Start, Jump_Loop, Jump_Land, Crouch_Idle_Loop, Crouch_Fwd_Loop, Sword_Attack, Sword_Idle, Roll, Hit_Chest, Hit_Head, Death01.
 
 ## Adaptations
 
 The model and selected motions are retargeted into `adult-explorer.glb`. Root travel is removed so the game controller determines position. Unused VRM extensions, thumbnail and normal/matcap textures are removed; base textures are packaged as WebP at up to 1024 pixels. Normals are retained for toon lighting. The model's humanoid bone mapping is preserved in scene metadata.
 
-The game sets standing height to approximately **1.75 metres**, uses grey-purple hair and a dark uniform, and adds an original skinned split coat and grey trim. Crouching includes a small additive torso adjustment for low clearance. This is an adapted, generic exploration character inspired by the supplied clothing reference, not the pictured original character.
+The game sets standing height to approximately **1.75 metres**, uses grey-purple hair and a dark uniform, and adds an original skinned split coat and grey trim. Crouching includes a small additive torso adjustment for low clearance. Combat uses the CC0 sword, roll, hit and death clips; runtime adjustments support the equipped hand and limb visibility follows the actual skin weights. This is an adapted, generic exploration character inspired by the supplied clothing reference, not the pictured original character.
 
 All model textures and animation are served locally from this repository. No avatar account, runtime CDN or API key is needed. CC0 legal text is in [LICENSE.txt](LICENSE.txt).

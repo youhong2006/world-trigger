@@ -155,13 +155,20 @@ export function createShootingSystem({
         let removed = false;
         for (const { from, to, distance } of segments) {
           let fraction = traceWorld(from, to, 0.04),
-            target = null;
+            target = null,
+            hitZone = null;
           for (const candidate of targets) {
             if (candidate.health <= 0) continue;
-            const t = segmentSphere(from, to, candidate.position, candidate.radius + 0.045);
-            if (t < fraction) {
-              fraction = t;
-              target = candidate;
+            const volumes = candidate.hitVolumes ?? [
+              { id: null, position: candidate.position, radius: candidate.radius },
+            ];
+            for (const volume of volumes) {
+              const t = segmentSphere(from, to, volume.position, volume.radius + 0.045);
+              if (t < fraction) {
+                fraction = t;
+                target = candidate;
+                hitZone = volume.id;
+              }
             }
           }
           b.travelled += distance * Math.min(1, fraction);
@@ -171,9 +178,32 @@ export function createShootingSystem({
               y: from.y + (to.y - from.y) * fraction,
               z: from.z + (to.z - from.z) * fraction,
             };
-            if (target) {
+            if (b.type === 'meteor') {
+              const explosion = {
+                x: hit.x + (from.x - hit.x) * 0.015,
+                y: hit.y + (from.y - hit.y) * 0.015,
+                z: hit.z + (from.z - hit.z) * 0.015,
+              };
+              const radius = 6;
+              let connected = false;
+              for (const candidate of targets) {
+                const d = lengthOf(explosion, candidate.position);
+                if (candidate.health <= 0 || d > radius + candidate.radius) continue;
+                if (candidate !== target && traceWorld(explosion, candidate.position, 0.015) < 0.999)
+                  continue;
+                connected = true;
+                onHit(
+                  candidate.id,
+                  b.damage * 1.8 * Math.max(0.2, 1 - Math.max(0, d - candidate.radius) / radius),
+                  hit,
+                  { ...b, hitZone: null, explosion: true },
+                );
+              }
+              if (connected) hits++;
+              onEvent('explosion', { position: explosion, radius, type: b.type });
+            } else if (target) {
               hits++;
-              onHit(target.id, b.damage, hit, b);
+              onHit(target.id, b.damage, hit, { ...b, hitZone });
             }
             onEvent('impact', { position: hit, targetId: target?.id ?? null, type: b.type });
             projectiles.splice(n, 1);

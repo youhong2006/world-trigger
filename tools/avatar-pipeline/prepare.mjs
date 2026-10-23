@@ -28,7 +28,7 @@ for(const [suffix,side] of [['L','left'],['R','right']]){
 }
 const targetHips=targetNodes.get(humanoid.hips),sourceHips=source.getRoot().listNodes().find(n=>n.getName()==='DEF-hips');
 const hipsScale=targetHips.getWorldTranslation()[1]/world.get(sourceHips).p.y;
-const selected=['Idle_Loop','Walk_Loop','Sprint_Loop','Jump_Start','Jump_Loop','Jump_Land','Crouch_Idle_Loop','Crouch_Fwd_Loop'];
+const selected=['Idle_Loop','Walk_Loop','Sprint_Loop','Jump_Start','Jump_Loop','Jump_Land','Crouch_Idle_Loop','Crouch_Fwd_Loop','Sword_Attack','Sword_Idle','Roll','Hit_Chest','Hit_Head','Death01'];
 const buffer=target.getRoot().listBuffers()[0];
 for(const anim of source.getRoot().listAnimations().filter(a=>selected.includes(a.getName()))){
  const result=target.createAnimation(anim.getName());

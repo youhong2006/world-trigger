@@ -2337,3 +2337,194 @@ body.editing-fire .ability-card {
     max-height: calc(100dvh - 420px);
   }
 }
+
+/* Combat HUD uses the same cyan energy language as the firing terminal. */
+#damage-feedback {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+  opacity: 0;
+  box-shadow: inset 0 0 120px 30px #18d8ef;
+  background: radial-gradient(ellipse, transparent 45%, #30d7f020);
+}
+#battle-hud {
+  position: fixed;
+  top: 100px;
+  bottom: auto;
+  left: 50%;
+  min-width: 280px;
+  max-width: 65vw;
+  text-align: center;
+  padding: 12px 22px;
+  display: grid;
+  gap: 5px;
+  pointer-events: none;
+  transform: translateX(-50%) scale(var(--hud-scale));
+  transform-origin: top center;
+}
+#battle-hud[hidden] {
+  display: none;
+}
+#battle-hud strong {
+  color: var(--cyan, #48dfe9);
+  font-size: 16px;
+  letter-spacing: 0.08em;
+}
+#battle-progress {
+  font-size: 12px;
+}
+#battle-warning {
+  color: #ffc983;
+  min-height: 14px;
+  font-size: 11px;
+}
+/* One flowing column prevents body integrity, weapon slots and speed from overlapping. */
+#left-hud {
+  position: fixed;
+  left: 3.5%;
+  bottom: 26px;
+  width: 252px;
+  display: grid;
+  gap: 12px;
+  transform: scale(var(--hud-scale));
+  transform-origin: left bottom;
+  max-height: calc((100dvh - 120px) / max(1, var(--hud-scale)));
+  overflow-y: auto;
+  scrollbar-width: thin;
+  pointer-events: auto;
+}
+#left-hud .weapon-card,
+#left-hud .trion-card,
+#left-hud .flight-readout {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  top: auto;
+  width: 100%;
+  transform: none;
+}
+.trion-card #body-panel {
+  position: static;
+  width: auto;
+  margin-top: 10px;
+  padding: 10px 0 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid #5ab8ce40;
+  transform: none;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+#body-status {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 8px 0;
+}
+#body-status span {
+  font-size: 11px;
+  color: #80e3e7;
+  display: grid;
+  gap: 4px;
+}
+#body-status i {
+  height: 3px;
+  background: linear-gradient(to right, #22d4e6 calc(var(--integrity) * 100%), #284550 0);
+}
+#body-status .wounded {
+  color: #ffd18b;
+}
+#body-status .severed {
+  color: #ef9e80;
+  text-decoration: line-through;
+}
+#action-state {
+  font-size: 10px;
+}
+#body-panel > small {
+  display: none;
+}
+#firing-menu:not(.expanded) {
+  top: 162px;
+  right: calc(3.5% + 192px);
+}
+.mission-options {
+  display: flex;
+  gap: 20px;
+  margin: 20px 0;
+}
+.mission-options label {
+  display: grid;
+  gap: 8px;
+  flex: 1;
+}
+.mission-options select {
+  padding: 10px;
+  border: 1px solid #3a6570;
+  border-radius: 6px;
+  background: #0e2631;
+  color: #e0f9fb;
+  font: inherit;
+}
+@media (max-width: 1050px) and (min-width: 761px) {
+  #left-hud {
+    width: 225px;
+  }
+}
+@media (max-width: 900px) {
+  #battle-hud {
+    top: 75px;
+    padding: 8px 14px;
+    max-width: 70vw;
+  }
+  #battle-title {
+    font-size: 13px !important;
+  }
+  #battle-progress {
+    font-size: 11px;
+  }
+}
+@media (max-width: 760px) {
+  #left-hud {
+    left: 14px;
+    bottom: 60px;
+    width: 175px;
+    transform: scale(min(1, var(--hud-scale)));
+    max-height: calc(100dvh - 145px);
+    gap: 8px;
+  }
+  .trion-card #body-panel {
+    padding-top: 8px;
+    margin-top: 8px;
+  }
+  #body-status {
+    gap: 4px;
+  }
+  #body-status span {
+    font-size: 10px;
+  }
+  #firing-menu:not(.expanded) {
+    top: 190px;
+    right: calc(4% + 138px);
+  }
+}
+@media (max-width: 600px) {
+  #battle-hud {
+    top: 70px;
+    left: auto;
+    right: 10px;
+    min-width: 0;
+    width: 200px;
+    transform: scale(var(--hud-scale));
+    transform-origin: right top;
+  }
+  .mission-options {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .home-actions {
+    flex-wrap: wrap;
+  }
+}
