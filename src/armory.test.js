@@ -32,8 +32,8 @@ test('armory sanitizes imported slots, active selections, finite weapon budgets 
   assert.equal(weapon.delay, 0);
   assert.equal(weapon.mode, 'volley');
   assert.equal(normalizeArmory(null).profiles.length, 1);
-  assert.ok(shotCost({ count: 27, damage: 18 }) > shotCost({ count: 1, damage: 2 }));
-  assert.equal(shotCost({}), 9);
+  assert.equal(shotCost({ count: 27, damage: 18 }), shotCost({ count: 1, damage: 2 }));
+  assert.equal(shotCost({}), 1);
 });
 test('loadouts save independent copies, equipped slots, firing side, routes and records across reload', () => {
   const storage = memory(),
@@ -76,11 +76,24 @@ test('loadout bounds and unavailable storage do not break live equipment', () =>
   assert.equal(armory.add(), false);
   assert.equal(armory.snapshot.profiles.length, 6);
   assert.equal(armory.snapshot.saved, false);
-  assert.equal(armory.equip('main', 1, 'hound'), false);
+  assert.equal(armory.equip('main', 1, 'blade'), false);
   assert.equal(armory.selectSlot('sub', 4), false);
   assert.equal(armory.configure('meteor', { range: 300 }), true);
   assert.equal(armory.profile.weapons.meteor.range, 300);
   while (armory.snapshot.profiles.length > 1) armory.remove();
   assert.equal(armory.remove(), false);
   assert.deepEqual(normalizeFire(null), normalizeFire());
+});
+
+test('the old standard loadout gains Hound in its empty slot without replacing Meteor or custom kits', () => {
+  const old = normalizeArmory({
+    profiles: [
+      { id: 'old', main: ['asteroid', 'viper', 'meteor', null], weapons: { asteroid: { speed: 125 } } },
+    ],
+  });
+  assert.deepEqual(old.profiles[0].main, ['asteroid', 'viper', 'meteor', 'hound']);
+  assert.equal(old.profiles[0].weapons.asteroid.speed, 125);
+  assert.equal(old.profiles[0].weapons.asteroid.customSpeed, 125);
+  const custom = normalizeArmory({ profiles: [{ main: ['viper', null, null, null] }] });
+  assert.deepEqual(custom.profiles[0].main, ['viper', null, null, null]);
 });

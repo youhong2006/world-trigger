@@ -36,7 +36,7 @@ test('ground casting places ahead without self-triggering and stepping consumes 
   assert.equal(w.combat.snapshot.remaining, 100);
   const result = w.skill.release({}, 0);
   assert.equal(result.ok, true);
-  assert.equal(w.combat.snapshot.remaining, 96);
+  assert.equal(w.combat.snapshot.remaining, 99.7);
   assert.equal(w.skill.snapshot.launches, 0);
   assert.equal(result.pad.z, -1.7);
   step(w, 0.1);
@@ -62,7 +62,7 @@ test('air release immediately launches and can chain without a landing; no keys 
   assert.equal(w.skill.snapshot.launches, 2);
   assert.equal(w.motor.velocity.z, 0);
   assert.equal(w.motor.velocity.y, 28);
-  assert.equal(w.combat.snapshot.remaining, 92);
+  assert.equal(w.combat.snapshot.remaining, 99.4);
   assert.equal(w.motor.grounded, false);
 });
 test('landing on a previously placed pad with released directions launches vertically', () => {
@@ -91,7 +91,7 @@ test('blocked placements, cancellation, expiry, rate limits and resource shortag
   assert.equal(w.skill.begin(), false);
   w.skill.update(12.1);
   assert.equal(w.skill.snapshot.pads.length, 0);
-  w.combat.damage(94);
+  w.combat.damage(99.5);
   assert.equal(w.skill.begin(), false);
   w.skill.reset();
   assert.equal(w.skill.snapshot.launches, 0);

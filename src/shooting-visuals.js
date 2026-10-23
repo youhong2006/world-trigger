@@ -30,7 +30,7 @@ export function createShootingVisuals(scene, collision) {
   root.add(deck);
   for (const { x, z, w, d, h } of [
     { x: 75, z: 390, w: 12, d: 2, h: 2.2 },
-    { x: 110, z: 336, w: 10, d: 2, h: 3 },
+    { x: 110, z: 395, w: 10, d: 2, h: 3 },
   ]) {
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(w, h, d),

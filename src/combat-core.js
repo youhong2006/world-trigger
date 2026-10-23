@@ -3,7 +3,7 @@ export const TRIGGERS = Object.freeze({
   grasshopper: {
     name: '蚱蜢',
     english: 'GRASSHOPPER',
-    cost: 4,
+    cost: 0.3,
     available: true,
     kind: '機動',
     description: '地面放置，踩踏彈射。空中釋放立即啟動，無方向輸入則向上。',
@@ -11,30 +11,31 @@ export const TRIGGERS = Object.freeze({
   asteroid: {
     name: '小行星彈',
     english: 'ASTEROID',
-    cost: 9,
+    cost: 1,
     available: true,
     kind: '射擊',
     description: '普通直射三離子彈，可調整分割數量、威力、速度與射程。',
   },
   hound: {
-    name: '追蹤彈',
+    name: '獵犬',
     english: 'HOUND',
-    available: false,
+    cost: 1,
+    available: true,
     kind: '射擊',
-    description: '追蹤移動目標。尚未加入實戰。',
+    description: '選擇上方、側面或包圍路線，依三段設定追蹤可見目標。',
   },
   viper: {
     name: '毒蛇',
     english: 'VIPER',
-    cost: 9,
+    cost: 1,
     available: true,
     kind: '射擊',
-    description: '保留發射選項，目前使用小行星直射規則；特殊路線稍後調整。',
+    description: '依預設或自訂折線飛行，支援高速、中速、低速與自訂速度。',
   },
   meteor: {
     name: '美特拉',
     english: 'METEOR',
-    cost: 9,
+    cost: 1,
     available: true,
     kind: '射擊',
     description: '保留發射選項，目前使用小行星直射規則；爆炸效果稍後調整。',
@@ -88,7 +89,7 @@ export function createCombatCore({ maximum = 100, recovery = 1.5, recoveryDelay 
   }
   function consume(id, cost = TRIGGERS[id]?.cost, { parallel = false } = {}) {
     if (!canUse(id, cost, parallel)) return false;
-    remaining = Math.max(0, remaining - cost);
+    remaining = Math.max(0, Math.round((remaining - cost) * 1e6) / 1e6);
     lastSpend = time;
     if (!parallel || charging === id) charging = null;
     state = remaining <= 0 ? 'exhausted' : charging ? 'charging' : 'ready';

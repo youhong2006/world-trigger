@@ -1,5 +1,5 @@
 export const GRASSHOPPER = Object.freeze({
-  cost: 4,
+  cost: 0.3,
   lifetime: 12,
   radius: 0.82,
   placeDistance: 1.7,

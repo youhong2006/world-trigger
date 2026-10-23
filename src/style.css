@@ -2200,3 +2200,140 @@ body.aiming .reticle {
     bottom: 355px;
   }
 }
+#firing-menu {
+  position: absolute;
+  right: 3.5%;
+  top: 148px;
+  width: 235px;
+  color: #b9e9f1;
+  pointer-events: auto;
+  background: #092a3bed;
+  border: 1px solid #38d0e05a;
+  border-radius: 4px;
+  padding: 12px;
+  font-size: 11px;
+  transform: scale(var(--hud-scale));
+  transform-origin: right top;
+}
+#firing-menu:not(.expanded) {
+  top: 45%;
+  width: 46px;
+  padding: 5px;
+  background: #082433b8;
+}
+.firing-caption {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 7px;
+  font-size: 9px;
+  color: #73d9e7;
+}
+.firing-caption b {
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+.firing-caption span {
+  font-size: 8px;
+  color: #7fa4b8;
+  white-space: nowrap;
+}
+.firing-breadcrumb {
+  padding: 9px 0;
+  color: #88b9c8;
+  font-size: 9px;
+}
+.firing-items {
+  display: grid;
+  gap: 5px;
+  max-height: calc(100dvh - 433px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+#firing-menu .firing-item {
+  display: flex;
+  text-align: left;
+  align-items: center;
+  gap: 9px;
+  padding: 5px;
+  min-height: 43px;
+  width: 100%;
+  border: 1px solid transparent;
+  background: #143749;
+  border-radius: 2px;
+}
+#firing-menu .firing-item.highlighted {
+  border-color: #27dbec;
+  background: #195365;
+}
+.firing-square {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 1px solid #3ed5e586;
+  color: #8cf9ff;
+  box-shadow: inset 0 0 8px #27bfd317;
+  font-size: 17px;
+}
+.firing-label {
+  display: block;
+  flex: 1;
+  font-size: 11px;
+}
+.firing-label small {
+  display: block;
+  margin-top: 4px;
+  color: #82becd;
+  font:
+    9px ui-monospace,
+    monospace;
+}
+.firing-item > b {
+  font-size: 13px;
+  font-weight: 400;
+  color: #8df2f8;
+}
+.firing-instruction {
+  line-height: 1.8;
+  margin: 10px 0 0;
+  font-size: 9px;
+  color: #83afbf;
+}
+#firing-menu:not(.expanded) .firing-caption,
+#firing-menu:not(.expanded) .firing-label,
+#firing-menu:not(.expanded) .firing-item > b,
+#firing-menu:not(.expanded) .firing-instruction {
+  display: none;
+}
+#firing-menu:not(.expanded) .firing-items {
+  max-height: 240px;
+}
+#firing-menu:not(.expanded) .firing-item {
+  padding: 2px;
+  justify-content: center;
+  min-height: 35px;
+}
+body.editing-fire .map {
+  opacity: 0;
+  pointer-events: none;
+}
+body.editing-fire .ability-card {
+  bottom: 14px;
+}
+@media (max-width: 760px) {
+  #firing-menu {
+    right: 12px;
+    top: 140px;
+    width: 190px;
+    font-size: 10px;
+    padding: 9px;
+  }
+  .firing-label {
+    font-size: 10px;
+  }
+  .firing-items {
+    max-height: calc(100dvh - 420px);
+  }
+}

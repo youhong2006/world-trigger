@@ -3,26 +3,26 @@ import assert from 'node:assert/strict';
 import { createCombatCore } from './combat-core.js';
 test('preparing can be cancelled for free, valid casts consume once and future weapons stay unavailable', () => {
   const core = createCombatCore();
-  assert.equal(core.begin('hound'), false);
+  assert.equal(core.begin('blade'), false);
   assert.equal(core.begin('grasshopper'), true);
   assert.equal(core.begin('grasshopper'), false);
   core.cancel();
   assert.equal(core.snapshot.remaining, 100);
   assert.equal(core.consume('grasshopper'), true);
-  assert.equal(core.snapshot.remaining, 96);
+  assert.equal(core.snapshot.remaining, 99.7);
 });
 test('recovery waits after spending and pauses resource, recovery and preparation', () => {
   const core = createCombatCore();
   core.consume('grasshopper');
   core.update(1);
-  assert.equal(core.snapshot.remaining, 96);
+  assert.equal(core.snapshot.remaining, 99.7);
   core.pause(true);
   core.update(30);
-  assert.equal(core.snapshot.remaining, 96);
+  assert.equal(core.snapshot.remaining, 99.7);
   assert.equal(core.begin('grasshopper'), false);
   core.pause(false);
   core.update(0.9);
-  assert.ok(core.snapshot.remaining > 96);
+  assert.ok(core.snapshot.remaining > 99.7);
   core.update(100);
   assert.equal(core.snapshot.remaining, 100);
 });
@@ -32,6 +32,7 @@ test('overdraw is rejected, exhaustion emits once, and resetting clears damage a
   core.subscribe((e) => {
     if (e.type === 'exhausted') exhausted++;
   });
+  core.damage(7.4);
   core.consume('grasshopper');
   core.consume('grasshopper');
   assert.equal(core.snapshot.remaining, 0);

@@ -11,8 +11,11 @@ export const ACTIONS = {
   view: '切換視角',
   reset: '返回起點／重試挑戰',
   prepare: '生成立方體／收起',
-  fire: '發射（按住連發）',
+  fire: '發射立方體彈組',
+  split: '分割子彈',
   aim: '瞄準（按住）',
+  menuEnter: '發射選單：進入下一層',
+  menuBack: '發射選單：返回／關閉',
   swapSide: '切換射擊側',
   cycleTarget: '切換輔助目標',
   slot1: '主槽 1',
@@ -71,7 +74,10 @@ export const DEFAULTS = Object.freeze({
     reset: 'KeyR',
     prepare: 'KeyE',
     fire: 'Mouse0',
-    aim: 'Mouse2',
+    split: 'Mouse2',
+    aim: 'Mouse1',
+    menuEnter: 'Mouse4',
+    menuBack: 'Mouse3',
     swapSide: 'KeyF',
     cycleTarget: 'KeyT',
     slot1: 'Digit1',
@@ -129,7 +135,7 @@ export const RESERVED = new Set([
 export function validBinding(code) {
   return (
     typeof code === 'string' &&
-    /^(Mouse[012]|Key[A-Z]|Digit[0-9]|Arrow(Up|Down|Left|Right)|Space|Shift(Left|Right)|Control(Left|Right)|Alt(Left|Right)|Enter|Backspace|Bracket(Left|Right))$/.test(
+    /^(Mouse[0-4]|Key[A-Z]|Digit[0-9]|Arrow(Up|Down|Left|Right)|Space|Shift(Left|Right)|Control(Left|Right)|Alt(Left|Right)|Enter|Backspace|Bracket(Left|Right))$/.test(
       code,
     ) &&
     !RESERVED.has(code)
@@ -146,10 +152,16 @@ export function normalizeSettings(value = {}) {
     if (typeof DEFAULTS[key] === 'boolean' && typeof value[key] === 'boolean') out[key] = value[key];
   out.runSpeed = Math.max(out.walkSpeed, out.runSpeed);
   // Reserve valid imported bindings first, then fill missing actions without collisions.
+  const bindings = { ...value.bindings };
+  // Older saves used right click to aim; migrate it to middle click only when split is new.
+  if (bindings.split === undefined && bindings.aim === 'Mouse2') {
+    bindings.aim = 'Mouse1';
+    bindings.split = 'Mouse2';
+  }
   const used = new Set();
   out.bindings = {};
   for (const action of Object.keys(ACTIONS)) {
-    const code = value.bindings?.[action];
+    const code = bindings[action];
     if (validBinding(code) && !used.has(code)) {
       out.bindings[action] = code;
       used.add(code);
@@ -184,6 +196,8 @@ export function keyLabel(code) {
       Mouse0: '滑鼠左鍵',
       Mouse1: '滑鼠中鍵',
       Mouse2: '滑鼠右鍵',
+      Mouse3: '返回側鍵',
+      Mouse4: '前進側鍵',
       Space: 'Space',
       ShiftLeft: 'L Shift',
       ShiftRight: 'R Shift',

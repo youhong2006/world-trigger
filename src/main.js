@@ -1,10 +1,13 @@
 import * as THREE from 'three';
 import './style.css';
 import { ACTIONS, loadSettings, isPressed, keyLabel } from './game-settings.js';
-import { createArmory, SHOOTING_TYPES, shotCost } from './armory.js';
+import { createArmory, SHOOTING_TYPES, shotCost, normalizeFire } from './armory.js';
 import { createShootingSystem, createWorldTrace, chooseAimPoint } from './projectiles.js';
 import { createRangeChallenge, RANGE_SPAWN } from './range-challenge.js';
 import { createShootingVisuals } from './shooting-visuals.js';
+import { loadDraft } from './trajectory-plan.js';
+import { createFiringMenu } from './firing-menu.js';
+import { createFiringPanel } from './firing-panel.js';
 import { TRIGGERS, createCombatCore } from './combat-core.js';
 import { createGrasshopper } from './grasshopper.js';
 import { createGrasshopperVisuals } from './grasshopper-visuals.js';
@@ -241,6 +244,7 @@ const shooting = createShootingSystem({
   combat,
   traceWorld,
   getTargets: () => range.targets,
+  getPaths: () => loadDraft(storage).paths,
   onEvent(type, detail) {
     gunEffects.event(type, detail);
     weaponRevision++;
@@ -255,9 +259,37 @@ const shooting = createShootingSystem({
     range.hit(id, damage);
   },
 });
+const firingMenu = createFiringMenu({
+  getConfig: (type) => armory.profile.weapons[type],
+  getPaths: () => loadDraft(storage).paths,
+  onRemember: (type, state) => armory.rememberMenu(type, state),
+  onConfig: tuneWeapon,
+});
+const firingPanel = createFiringPanel(document.querySelector('#firing-menu'), firingMenu);
+function tuneWeapon(type, patch) {
+  const cfg = normalizeFire({ ...armory.profile.weapons[type], ...patch });
+  if (!shooting.retune(type, cfg)) {
+    notify('目前無法調整彈組');
+    return false;
+  }
+  armory.configure(type, patch, { live: true });
+  return true;
+}
+function splitCube() {
+  if (!exploring || paused || endedChallenge()) return;
+  const gun = selectedGun();
+  if (!shooting.snapshot.prepared[gun.side]) {
+    notify('先按觸發鍵生成立方體，再用右鍵分割');
+    return;
+  }
+  const counts = [1, 8, 27],
+    count = counts[(counts.indexOf(gun.config.count) + 1) % counts.length];
+  if (tuneWeapon(gun.type, { count })) notify(`已分割為 ${count} 發 · 同彈種自動沿用`);
+}
 let previousSlots = { main: armory.active('main'), sub: armory.active('sub') };
 armory.subscribe((reason) => {
   if (reason === 'configure' || reason === 'profile') shooting.clear();
+  if (reason === 'profile') firingMenu.activate(null);
   for (const side of ['main', 'sub'])
     if (previousSlots[side] !== armory.active(side)) {
       shooting.clear(side);
@@ -295,8 +327,9 @@ function muzzle(side) {
     f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
   const ideal = pivot
     .clone()
-    .addScaledVector(right, side === 'main' ? 0.5 : -0.5)
-    .addScaledVector(f, 0.8);
+    .addScaledVector(right, (side === 'main' ? 1 : -1) * (playerView.mode === 'first' ? 1.15 : 1.05))
+    .addScaledVector(f, playerView.mode === 'first' ? 2.5 : 0.5);
+  ideal.y += 0.18;
   const hit = traceWorld(pivot, ideal, 0.06);
   return ideal.lerpVectors(pivot, ideal, Math.max(0, hit - 0.025));
 }
@@ -310,23 +343,24 @@ function currentAim() {
     range: gun.config?.range ?? 220,
     targets: range.targets,
     traceWorld,
-    assist: isAiming() && gun.config?.aim === 'assist',
+    assist: (isAiming() && gun.config?.aim === 'assist') || gun.type === 'hound',
     selectedId: selectedTargetId,
   });
 }
 function prepareCube() {
   if (!exploring || paused || endedChallenge()) return;
   const gun = selectedGun();
+  firingMenu.activate(gun.type);
   if (!SHOOTING_TYPES.includes(gun.type)) {
     notify('此側尚未啟動射擊觸發器，請切換槽位或射擊側');
     return;
   }
   if (shooting.snapshot.prepared[gun.side]) {
     shooting.clear(gun.side);
-    notify('已收起立方體；生成消耗不退還');
+    notify('已收起立方體；未消耗三離子');
     return;
   }
-  if (!shooting.prepare(gun.side, gun.type, gun.config)) notify('三離子不足，或此側仍在發射中');
+  if (!shooting.prepare(gun.side, gun.type, gun.config)) notify('此側仍在發射中，或戰鬥體需要重整');
 }
 function fireCurrent() {
   if (!exploring || paused || endedChallenge()) return;
@@ -338,15 +372,21 @@ function fireCurrent() {
     }
     return;
   }
+  if (!shooting.snapshot.prepared[gun.side]) {
+    if (performance.now() - lastShotNotice > 1800) {
+      notify('先按觸發鍵生成立方體，再用左鍵發射（每批 1 點）');
+      lastShotNotice = performance.now();
+    }
+    return;
+  }
   const aim = currentAim();
-  const fired = shooting.fire(gun.side, gun.type, gun.config, muzzle(gun.side), aim.point);
+  const fired = shooting.fire(gun.side, gun.type, gun.config, muzzle(gun.side), aim.point, aim.targetId);
   if (
     !fired &&
     combat.snapshot.remaining < shotCost(gun.config) &&
-    !shooting.snapshot.prepared[gun.side] &&
     performance.now() - lastShotNotice > 2500
   ) {
-    notify('三離子不足以生成此彈組，稍待恢復或降低分割數與威力');
+    notify('三離子不足 1 點，稍待恢復即可發射');
     lastShotNotice = performance.now();
   }
 }
@@ -421,7 +461,7 @@ function startChallenge() {
   document.querySelector('#challenge-result').hidden = true;
   weaponRevision++;
   syncPlayerHud(true);
-  notify('90 秒內擊破六靶。左鍵發射、右鍵瞄準，E 可預先生成立方體。');
+  notify('90 秒內擊破六靶。E 生成、右鍵分割、左鍵發射，中鍵瞄準。');
 }
 let lastSlotMarkup = '';
 function updateWeaponHud() {
@@ -439,7 +479,7 @@ function updateWeaponHud() {
     : shots.pending
       ? '正在發射'
       : `${keyLabel(settings.bindings.prepare)} 生成 · ${keyLabel(settings.bindings.fire)} 發射`;
-  document.querySelector('#weapon-special').hidden = !['viper', 'meteor'].includes(gun.type);
+  document.querySelector('#weapon-special').hidden = gun.type !== 'meteor';
   document.querySelector('#weapon-profile').textContent = p.name;
   const slotMarkup = ['main', 'sub']
     .map(
@@ -497,6 +537,7 @@ function moveInput() {
   };
 }
 function clearInput() {
+  firingMenu.close();
   keys = {};
   jumpQueued = false;
   sprintLatched = false;
@@ -682,6 +723,7 @@ function leave() {
   document.body.classList.remove('exploring', 'third-person');
   document.body.classList.add('overview');
   walking.hidden = true;
+  document.body.classList.remove('editing-fire');
   camera.fov = 51;
   camera.near = 5;
   camera.updateProjectionMatrix();
@@ -734,7 +776,7 @@ function beginCast() {
     return;
   }
   if (!grasshopper.begin())
-    notify(combat.snapshot.remaining < 4 ? '三離子不足，稍待恢復或返回起點' : '技能尚在準備，稍後再試');
+    notify(combat.snapshot.remaining < 0.3 ? '三離子不足，稍待恢復或返回起點' : '技能尚在準備，稍後再試');
 }
 function releaseCast() {
   if (!exploring || paused) return;
@@ -877,6 +919,12 @@ function dispatchAction(action) {
   if (action === 'grasshopper') beginCast();
   if (action === 'prepare') prepareCube();
   if (action === 'fire') fireQueued = true;
+  if (action === 'split') splitCube();
+  if (action === 'menuEnter') {
+    firingMenu.activate(selectedGun().type);
+    firingMenu.enter();
+  }
+  if (action === 'menuBack') firingMenu.back();
   if (action === 'swapSide') armory.setSide(armory.profile.fireSide === 'main' ? 'sub' : 'main');
   if (action === 'cycleTarget') cycleAimTarget();
   if (/^slot[1-8]$/.test(action ?? '')) {
@@ -917,6 +965,10 @@ window.addEventListener('keydown', (event) => {
     !Object.values(settings.bindings).includes('ShiftRight')
   )
     action = 'sprint';
+  if (!action && !Object.values(settings.bindings).includes(event.code)) {
+    if (event.code === 'BracketRight') action = 'menuEnter';
+    if (event.code === 'BracketLeft') action = 'menuBack';
+  }
   if (exploring && (action || event.code.startsWith('Arrow'))) event.preventDefault();
   keys[event.code] = true;
   if (!exploring || event.repeat) return;
@@ -942,6 +994,7 @@ document.addEventListener('visibilitychange', () => {
 });
 renderer.domElement.addEventListener('pointerdown', (event) => {
   if (paused || ui.isOpen || endedChallenge()) return;
+  if (exploring && event.button >= 3) event.preventDefault();
   const wasLocked = document.pointerLockElement === renderer.domElement;
   if (exploring && wasLocked) {
     const code = 'Mouse' + event.button;
@@ -959,6 +1012,10 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
   }
 });
 renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
+for (const type of ['mousedown', 'mouseup', 'auxclick'])
+  renderer.domElement.addEventListener(type, (event) => {
+    if (exploring && event.button >= 3) event.preventDefault();
+  });
 window.addEventListener('pointerup', (event) => {
   keys['Mouse' + event.button] = false;
   if (settings.bindings.crouch === 'Mouse' + event.button && !settings.crouchToggle) crouchRequested = false;
@@ -1000,6 +1057,11 @@ renderer.domElement.addEventListener(
     if (paused || ui.isOpen) return;
     if (exploring) {
       event.preventDefault();
+      firingMenu.activate(selectedGun().type);
+      if (firingMenu.snapshot.open) {
+        firingMenu.scroll(Math.sign(event.deltaY));
+        return;
+      }
       const distance = playerView.zoom(event.deltaY);
       ui.update({ cameraDistance: distance });
       return;
@@ -1167,7 +1229,7 @@ renderer.setAnimationLoop((now) => {
       hand.copy(camera.position).addScaledVector(direction, 0.65).addScaledVector(rightVector, 0.3);
       hand.y -= 0.28;
     } else hand.copy(avatar.handPosition());
-    if (!endedChallenge() && (actionPressed('fire') || fireQueued)) fireCurrent();
+    if (!endedChallenge() && fireQueued) fireCurrent();
     fireQueued = false;
     const aim = currentAim(),
       t = range.targets.find((t) => t.id === aim.targetId);
@@ -1179,6 +1241,9 @@ renderer.setAnimationLoop((now) => {
     muzzleMain.copy(muzzle('main'));
     muzzleSub.copy(muzzle('sub'));
     gunEffects.update(elapsed, shooting.snapshot, range.targets, { main: muzzleMain, sub: muzzleSub }, true);
+    firingMenu.activate(selectedGun().type);
+    firingPanel.render(!endedChallenge(), settings.bindings);
+    document.body.classList.toggle('editing-fire', !!firingMenu.snapshot.type && firingMenu.snapshot.open);
     const gh = grasshopper.snapshot;
     effects.update(elapsed, gh, hand, motor.grounded ? grasshopper.preview(yaw) : null, true);
     syncPlayerHud();
@@ -1225,6 +1290,7 @@ window.__mikado = {
       player: { ...motor.state, view: playerView.diagnostics, avatar: avatar.diagnostics },
       combat: combat.snapshot,
       shooting: shooting.snapshot,
+      firingMenu: firingMenu.snapshot,
       range: range.snapshot,
       armory: armory.snapshot,
       grasshopper: grasshopper.snapshot,

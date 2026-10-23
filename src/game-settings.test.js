@@ -75,3 +75,14 @@ test('older saves gain unique shooting controls and mouse rebinding swaps correc
   assert.equal(changed.bindings.fire, old.bindings.prepare);
   assert.equal(new Set(Object.values(changed.bindings)).size, Object.keys(ACTIONS).length);
 });
+
+test('right-click aiming in old saves migrates to split, with middle aim and side-menu buttons kept unique', () => {
+  const value = normalizeSettings({ bindings: { fire: 'Mouse0', aim: 'Mouse2', prepare: 'KeyE' } });
+  assert.equal(value.bindings.split, 'Mouse2');
+  assert.equal(value.bindings.aim, 'Mouse1');
+  assert.equal(value.bindings.menuEnter, 'Mouse4');
+  assert.equal(value.bindings.menuBack, 'Mouse3');
+  assert.equal(new Set(Object.values(value.bindings)).size, Object.keys(ACTIONS).length);
+  const rebound = rebind(value, 'menuEnter', 'BracketRight');
+  assert.equal(rebound.bindings.menuEnter, 'BracketRight');
+});

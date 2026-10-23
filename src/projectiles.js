@@ -1,4 +1,6 @@
-import { normalizeFire, shotCost } from './armory.js';
+import { normalizeFire, shotCost, SHOOTING_TYPES } from './armory.js';
+import { createGuidance, flightSegments } from './bullet-guidance.js';
+const lengthOf = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 const add = (p, v, t) => ({ x: p.x + v.x * t, y: p.y + v.y * t, z: p.z + v.z * t });
 export function segmentSphere(from, to, center, radius) {
   const d = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z },
@@ -17,6 +19,7 @@ export function createShootingSystem({
   combat,
   traceWorld = () => 1,
   getTargets = () => [],
+  getPaths = () => [],
   onEvent = () => {},
   onHit = () => {},
 }) {
@@ -31,21 +34,19 @@ export function createShootingSystem({
   function prepare(side, type, config) {
     if (
       !['main', 'sub'].includes(side) ||
-      !['asteroid', 'viper', 'meteor'].includes(type) ||
+      !SHOOTING_TYPES.includes(type) ||
       prepared[side] ||
       time < nextFire[side] ||
       pending.some((p) => p.side === side)
     )
       return false;
-    const params = normalizeFire(config),
-      cost = shotCost(params);
-    if (!combat.consume(type, cost, { parallel: true }) || combat.snapshot.state === 'exhausted')
-      return false;
+    if (['paused', 'exhausted'].includes(combat.snapshot.state)) return false;
+    const params = normalizeFire(config);
     prepared[side] = { id: ++id, side, type, params, created: time };
-    onEvent('generate', { side, type, cost });
+    onEvent('generate', { side, type, cost: 0 });
     return true;
   }
-  function fire(side, type, config, origin, point) {
+  function fire(side, type, config, origin, point, targetId = null) {
     if (combat.snapshot.state === 'paused' || combat.snapshot.state === 'exhausted' || time < nextFire[side])
       return false;
     if (!prepared[side] && !prepare(side, type, config)) return false;
@@ -56,13 +57,18 @@ export function createShootingSystem({
       projectiles.length + pending.length + batch.params.count > 256
     )
       return false;
+    if (!combat.consume(type, shotCost(), { parallel: true })) return false;
+    if (combat.snapshot.state === 'exhausted') {
+      clear(side);
+      return false;
+    }
     prepared[side] = null;
     const dir = { x: point.x - origin.x, y: point.y - origin.y, z: point.z - origin.z },
       length = Math.hypot(dir.x, dir.y, dir.z) || 1;
     dir.x /= length;
     dir.y /= length;
     dir.z /= length;
-    // Straight shots retain their launch direction. Reserved Viper/Meteor use the same baseline for now.
+    // Launch parameters and routes are captured; later menu edits affect unreleased cubes only.
     for (let n = 0; n < batch.params.count; n++)
       pending.push({
         side,
@@ -72,6 +78,9 @@ export function createShootingSystem({
           time + 0.1 + batch.params.delay + (batch.params.mode === 'burst' ? n * batch.params.interval : 0),
         origin: { ...origin },
         direction: { ...dir },
+        point: { ...point },
+        targetId,
+        paths: structuredClone(getPaths()),
       });
     nextFire[side] =
       time +
@@ -111,6 +120,17 @@ export function createShootingSystem({
       damage: params.damage,
       range: params.range,
       travelled: 0,
+      guidance: createGuidance(
+        item.batch.type,
+        params,
+        item.origin,
+        item.batch.type === 'viper'
+          ? add(item.origin, v, lengthOf(item.point, item.origin) / len)
+          : item.point,
+        item.targetId,
+        item.paths,
+        item.n,
+      ),
     };
     // Check muzzle access from the body as well as each subsequent flight segment in the integration layer.
     projectiles.push(bullet);
@@ -130,38 +150,38 @@ export function createShootingSystem({
         }
       for (let n = projectiles.length - 1; n >= 0; n--) {
         const b = projectiles[n],
-          from = b.position,
-          speed = Math.hypot(b.velocity.x, b.velocity.y, b.velocity.z),
-          duration = Math.min(step, (b.range - b.travelled) / speed),
-          to = add(from, b.velocity, duration);
-        let fraction = traceWorld(from, to, 0.04),
-          target = null;
-        for (const candidate of getTargets()) {
-          if (candidate.health <= 0) continue;
-          const t = segmentSphere(from, to, candidate.position, candidate.radius + 0.045);
-          if (t < fraction) {
-            fraction = t;
-            target = candidate;
+          targets = getTargets(),
+          segments = flightSegments(b, step, targets);
+        let removed = false;
+        for (const { from, to, distance } of segments) {
+          let fraction = traceWorld(from, to, 0.04),
+            target = null;
+          for (const candidate of targets) {
+            if (candidate.health <= 0) continue;
+            const t = segmentSphere(from, to, candidate.position, candidate.radius + 0.045);
+            if (t < fraction) {
+              fraction = t;
+              target = candidate;
+            }
           }
+          b.travelled += distance * Math.min(1, fraction);
+          if (fraction < 1) {
+            const hit = {
+              x: from.x + (to.x - from.x) * fraction,
+              y: from.y + (to.y - from.y) * fraction,
+              z: from.z + (to.z - from.z) * fraction,
+            };
+            if (target) {
+              hits++;
+              onHit(target.id, b.damage, hit, b);
+            }
+            onEvent('impact', { position: hit, targetId: target?.id ?? null, type: b.type });
+            projectiles.splice(n, 1);
+            removed = true;
+            break;
+          } else b.position = to;
         }
-        const distance = speed * duration;
-        b.travelled += distance * Math.min(1, fraction);
-        if (fraction < 1) {
-          const hit = {
-            x: from.x + (to.x - from.x) * fraction,
-            y: from.y + (to.y - from.y) * fraction,
-            z: from.z + (to.z - from.z) * fraction,
-          };
-          if (target) {
-            hits++;
-            onHit(target.id, b.damage, hit, b);
-          }
-          onEvent('impact', { position: hit, targetId: target?.id ?? null, type: b.type });
-          projectiles.splice(n, 1);
-        } else {
-          b.position = to;
-          if (b.travelled >= b.range - 1e-6) projectiles.splice(n, 1);
-        }
+        if (!removed && b.travelled >= b.range - 1e-6) projectiles.splice(n, 1);
       }
       remaining -= step;
     }
@@ -172,6 +192,16 @@ export function createShootingSystem({
   }
   return {
     prepare,
+    retune(type, config) {
+      if (['paused', 'exhausted'].includes(combat.snapshot.state)) return false;
+      const batches = Object.values(prepared).filter((b) => b?.type === type),
+        params = normalizeFire(config);
+      for (const b of batches) {
+        b.params = structuredClone(params);
+      }
+      onEvent('retune', { type });
+      return true;
+    },
     fire,
     update,
     clear,
@@ -203,6 +233,7 @@ export function createShootingSystem({
           ...p,
           position: { ...p.position },
           velocity: { ...p.velocity },
+          guidance: p.guidance ? structuredClone(p.guidance) : null,
         })),
         emitted,
         hits,

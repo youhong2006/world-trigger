@@ -1,10 +1,11 @@
 export const ARMORY_KEY = 'mikado-armory-v1';
-export const SHOOTING_TYPES = ['asteroid', 'viper', 'meteor'];
+export const SHOOTING_TYPES = ['asteroid', 'viper', 'hound', 'meteor'];
 export const EQUIPPABLE = ['grasshopper', ...SHOOTING_TYPES];
 export const FIRE_DEFAULTS = Object.freeze({
   count: 8,
   damage: 8,
   speed: 110,
+  customSpeed: 110,
   range: 220,
   spread: 0.35,
   mode: 'volley',
@@ -12,40 +13,78 @@ export const FIRE_DEFAULTS = Object.freeze({
   interval: 0.09,
   aim: 'manual',
   pathId: '',
+  routeSource: 'preset',
+  routePreset: 'direct',
+  houndRoute: 'above',
+  tracking: 'medium',
+  trackingCustom: [0.8, 0.5, 0.2],
+  speedPreset: 'custom',
+  menu: { trail: [], selection: {} },
 });
 export const FIRE_RANGES = {
   damage: [2, 18],
   speed: [55, 180],
+  customSpeed: [55, 180],
   range: [60, 400],
   spread: [0, 5],
   delay: [0, 2],
   interval: [0.04, 0.3],
 };
 export function normalizeFire(value = {}) {
-  const out = { ...FIRE_DEFAULTS };
+  const out = structuredClone(FIRE_DEFAULTS);
   if (!value || typeof value !== 'object') return out;
   for (const [key, [min, max]] of Object.entries(FIRE_RANGES))
     if (Number.isFinite(value[key])) out[key] = Math.min(max, Math.max(min, value[key]));
+  if (!Number.isFinite(value.customSpeed) && Number.isFinite(value.speed)) out.customSpeed = out.speed;
   if ([1, 8, 27].includes(value.count)) out.count = value.count;
   if (['volley', 'burst'].includes(value.mode)) out.mode = value.mode;
   if (['manual', 'assist'].includes(value.aim)) out.aim = value.aim;
   if (typeof value.pathId === 'string') out.pathId = value.pathId.slice(0, 50);
+  for (const [key, allowed] of Object.entries({
+    routeSource: ['preset', 'custom'],
+    routePreset: ['direct', 'left', 'right', 'above', 'flank'],
+    houndRoute: ['above', 'left', 'right', 'surround'],
+    tracking: ['high', 'medium', 'low', 'high-low-low', 'low-high-low', 'low-low-high', 'custom'],
+    speedPreset: ['high', 'medium', 'low', 'custom'],
+  }))
+    if (allowed.includes(value[key])) out[key] = value[key];
+  if (Array.isArray(value.trackingCustom))
+    out.trackingCustom = Array.from({ length: 3 }, (_, i) =>
+      Number.isFinite(value.trackingCustom[i])
+        ? Math.min(1, Math.max(0, value.trackingCustom[i]))
+        : FIRE_DEFAULTS.trackingCustom[i],
+    );
+  if (value.menu && typeof value.menu === 'object') {
+    if (Array.isArray(value.menu.trail))
+      out.menu.trail = value.menu.trail
+        .filter((v) => typeof v === 'string')
+        .slice(0, 2)
+        .map((v) => v.slice(0, 50));
+    if (value.menu.selection && typeof value.menu.selection === 'object')
+      out.menu.selection = Object.fromEntries(
+        Object.entries(value.menu.selection)
+          .filter(([k, v]) => k.length < 110 && typeof v === 'string' && v.length < 60)
+          .slice(0, 24),
+      );
+  }
   return out;
 }
-export function shotCost(value) {
-  const c = normalizeFire(value);
-  return Math.ceil((2 + c.count * (0.45 + c.damage * 0.04) + c.speed / 200 + c.range / 800) * 10) / 10;
+// A release costs one point, independent of subdivision, trajectory, or speed.
+export function shotCost() {
+  return 1;
 }
 export function defaultProfile(id = 'kit-1', name = '標準射手') {
   return {
     id,
     name,
-    main: ['asteroid', 'viper', 'meteor', null],
+    main: ['asteroid', 'viper', 'hound', 'meteor'],
     sub: ['grasshopper', null, null, null],
     activeMain: 0,
     activeSub: 0,
     fireSide: 'main',
-    weapons: Object.fromEntries(SHOOTING_TYPES.map((id) => [id, normalizeFire()])),
+    weapons: Object.fromEntries(
+      SHOOTING_TYPES.map((id) => [id, normalizeFire(['viper', 'hound'].includes(id) ? { count: 1 } : {})]),
+    ),
   };
 }
 export function normalizeArmory(value = {}) {
@@ -73,8 +112,11 @@ export function normalizeArmory(value = {}) {
         out['active' + side] = Number.isInteger(p['active' + side])
           ? Math.min(3, Math.max(0, p['active' + side]))
           : 0;
+      // Add Hound to the unused slot of the previous standard kit without replacing any weapon.
+      if (!p.weapons?.hound && out.main.join('|') === 'asteroid|viper|meteor|') out.main[3] = 'hound';
       out.fireSide = p.fireSide === 'sub' ? 'sub' : 'main';
-      for (const type of SHOOTING_TYPES) out.weapons[type] = normalizeFire(p.weapons?.[type]);
+      for (const type of SHOOTING_TYPES)
+        out.weapons[type] = normalizeFire(p.weapons?.[type] ?? out.weapons[type]);
       return out;
     });
   if (!profiles.length) profiles.push(defaultProfile());
@@ -144,10 +186,15 @@ export function createArmory(storage) {
       persist('configure');
       return true;
     },
-    configure(type, patch) {
+    rememberMenu(type, menu) {
+      if (!SHOOTING_TYPES.includes(type)) return;
+      current().weapons[type] = normalizeFire({ ...current().weapons[type], menu });
+      persist('menu');
+    },
+    configure(type, patch, { live = false } = {}) {
       if (!SHOOTING_TYPES.includes(type)) return false;
       current().weapons[type] = normalizeFire({ ...current().weapons[type], ...patch });
-      persist();
+      persist(live ? 'tune' : 'configure');
       return true;
     },
     rename(name) {

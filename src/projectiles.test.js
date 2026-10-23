@@ -13,25 +13,25 @@ const setup = (options = {}) => {
   const combat = createCombatCore({ recovery: 0 });
   return { combat, gun: createShootingSystem({ combat, ...options }) };
 };
-test('cube generation pays once, can fire alongside a prepared Grasshopper, and cannot refund cancellation', () => {
+test('cube generation is free, release pays once and can fire alongside a prepared Grasshopper', () => {
   const { combat, gun } = setup();
   combat.begin('grasshopper');
   assert.equal(gun.prepare('main', 'asteroid', {}), true);
-  assert.equal(combat.snapshot.remaining, 91);
+  assert.equal(combat.snapshot.remaining, 100);
   assert.equal(combat.snapshot.charging, 'grasshopper');
   assert.equal(gun.prepare('main', 'asteroid', {}), false);
   assert.equal(gun.fire('main', 'asteroid', {}, origin, point), true);
-  assert.equal(combat.snapshot.remaining, 91);
+  assert.equal(combat.snapshot.remaining, 99);
   advance(gun, 0.15);
   assert.equal(gun.snapshot.emitted, 8);
   assert.equal(gun.snapshot.projectiles.length, 8);
   advance(gun, 0.4);
   assert.equal(gun.prepare('main', 'viper', {}), true);
   gun.clear('main');
-  assert.equal(combat.snapshot.remaining, 82);
+  assert.equal(combat.snapshot.remaining, 99);
   assert.equal(gun.snapshot.prepared.main, null);
   assert.equal(combat.consume('grasshopper'), true);
-  assert.equal(combat.snapshot.remaining, 78);
+  assert.equal(combat.snapshot.remaining, 98.7);
 });
 test('delays and burst order retain a visible queued cube and pause their simulation clock', () => {
   const { combat, gun } = setup();
@@ -91,7 +91,7 @@ test('world walls and terrain block shots before targets, including thin cover a
   );
   assert.ok(Math.abs(fraction - 0.495) < 0.002);
 });
-test('straight trajectories remain consistent at 30 and 120 Hz, expire by range, and all placeholder types stay straight', () => {
+test('Asteroid, direct Viper and Meteor straight flight remains frame-consistent and expires at range', () => {
   const run = (hz, type) => {
     const { gun } = setup();
     gun.fire(
@@ -148,12 +148,14 @@ test('manual aim hits the actual ray; assisted aim requires a visible target wit
   assert.equal(segmentSphere(origin, point, { x: 0, y: 2, z: -50 }, 1), 0.49);
 });
 test('spending the last trion cannot resurrect a prepared cube after emergency exit', () => {
-  const combat = createCombatCore({ maximum: 9, recovery: 0 });
+  const combat = createCombatCore({ maximum: 1, recovery: 0 });
   const gun = createShootingSystem({ combat });
   combat.subscribe((e) => {
     if (e.type === 'exhausted') gun.clear();
   });
-  assert.equal(gun.prepare('main', 'asteroid', {}), false);
+  assert.equal(gun.prepare('main', 'asteroid', {}), true);
+  assert.equal(combat.snapshot.remaining, 1);
+  assert.equal(gun.fire('main', 'asteroid', {}, origin, point), false);
   assert.equal(combat.snapshot.state, 'exhausted');
   assert.equal(gun.snapshot.prepared.main, null);
 });
