@@ -10,7 +10,12 @@ import {
   roomPoint,
   routeStep,
   resetRoute,
+  transitCores,
+  nearestCore,
+  importantFacilities,
+  facilityAt,
 } from './hq-wayfinding.js';
+import { createHQIssueLog, HQ_ISSUE_STATUSES } from './hq-issues.js';
 import './hq-ui.css';
 
 const { HQ, HQ_STOPS, floorAt } = Layout;
@@ -84,9 +89,41 @@ export function createHQController({
   const rangeHud = create('div');
   rangeHud.id = 'hq-range-readout';
   rangeHud.hidden = true;
-  document.body.append(prompt, panel, breadcrumb, waypointHud, rangeHud);
+  const tools = create('div', 'hq-field-tools');
+  tools.hidden = true;
+  const guideButton = create('button', '', '設施導覽');
+  guideButton.type = 'button';
+  guideButton.onclick = directory;
+  const reportButton = create('button', '', '畫面問題紀錄');
+  reportButton.type = 'button';
+  reportButton.onclick = issuePanel;
+  tools.append(guideButton, reportButton, create('small', '', 'Tab 釋放游標後可點選'));
+  const issueHud = create('div', 'hq-issue-nearby');
+  issueHud.hidden = true;
+  document.body.append(prompt, panel, breadcrumb, waypointHud, rangeHud, tools, issueHud);
+  let storage = null;
+  try {
+    storage = globalThis.localStorage;
+  } catch {}
+  const issueLog = createHQIssueLog(storage);
   const doorSystem = createDoorSystem(interior.doors);
-  const lift = createLiftSystem(interior.lift, interior.liftDoors, collision);
+  const liftSystems = (interior.lifts ?? [interior.lift]).map((record) => ({
+    record,
+    system: createLiftSystem(
+      record,
+      record.doors ?? interior.liftDoors.filter((d) => !d.coreId || d.coreId === (record.id ?? 'main')),
+      collision,
+    ),
+  }));
+  const lift = liftSystems.find((r) => (r.record.id ?? 'main') === 'main')?.system ?? liftSystems[0].system;
+  const liftFor = (id = 'main') => liftSystems.find((r) => (r.record.id ?? 'main') === id) ?? liftSystems[0];
+  const movingLift = () =>
+    liftSystems.find(
+      (r) =>
+        r.system.inside(motor.position) ||
+        (Math.hypot(motor.position.x - r.record.x, motor.position.z - r.record.z) < 5 &&
+          r.system.snapshot.moving),
+    );
   let target = null,
     seated = null,
     exitPoint = null,
@@ -227,8 +264,63 @@ export function createHQController({
       const [cx, cy] = project(point.x, point.z);
       add('circle', { cx, cy, r: 1.7, fill: '#c0e8ed', opacity: 0.65 });
     }
-    const [lx, ly] = project(HQ.lift.x, HQ.lift.z);
-    add('rect', { x: lx - 4, y: ly - 4, width: 8, height: 8, fill: '#72eaf0', stroke: '#0b2f3c' });
+    for (const facility of importantFacilities().filter(
+      (f) => floor.y >= f.y && floor.y < f.top && f.id !== 'shooting-range',
+    )) {
+      const p = facility.mapPoint ?? facility,
+        turn = Layout.wingFrame(facility.wing, facility.y).rotation;
+      const [cx, cy] = project(p.x, p.z),
+        w = facility.w * scale,
+        d = facility.d * scale;
+      const color =
+        facility.kind === 'hangar' ? '#b7ac5d' : facility.kind === 'command' ? '#48d4dd' : '#6c9fae';
+      add('rect', {
+        x: cx - w / 2,
+        y: cy - d / 2,
+        width: w,
+        height: d,
+        transform: `rotate(${(-turn * 180) / Math.PI} ${cx} ${cy})`,
+        fill: color,
+        opacity: 0.8,
+        stroke: '#c4e7de',
+        'stroke-width': 1,
+      });
+      const label = add(
+        'text',
+        {
+          x: cx,
+          y: cy + 4,
+          fill: '#081c28',
+          'text-anchor': 'middle',
+          'font-size': 11,
+          'font-weight': 'bold',
+        },
+        facility.code,
+      );
+      label.style.pointerEvents = 'none';
+    }
+    for (const core of transitCores()) {
+      const [lx, ly] = project(core.x, core.z);
+      add('rect', { x: lx - 4, y: ly - 4, width: 8, height: 8, fill: '#72eaf0', stroke: '#0b2f3c' });
+      add('text', { x: lx + 6, y: ly + 3, fill: '#d6faff', 'font-size': 10 }, core.code ?? core.id);
+      add('path', {
+        d: `M ${lx + 6} ${ly + 8} h 3 v -2 h 3 v -2 h 3`,
+        stroke: '#d9ecc4',
+        fill: 'none',
+        'stroke-width': 1.5,
+      });
+    }
+    for (const issue of issueLog.records.filter((r) => r.floor === floor.id && r.status !== 'fixed')) {
+      const [cx, cy] = project(issue.position.x, issue.position.z);
+      const marker = add('path', {
+        d: `M ${cx} ${cy - 5} L ${cx + 5} ${cy + 4} L ${cx - 5} ${cy + 4} Z`,
+        fill: issue.status === 'confirmed' ? '#f08070' : '#f2ca78',
+        stroke: '#1e2b34',
+      });
+      const title = document.createElementNS(ns, 'title');
+      title.textContent = `${HQ_ISSUE_STATUSES[issue.status]}：${issue.note || issue.title}`;
+      marker.append(title);
+    }
     add('text', { x: 310, y: 192, fill: '#9bc0ce', 'text-anchor': 'middle', 'font-size': 15 }, '中央中庭');
     add(
       'text',
@@ -262,6 +354,22 @@ export function createHQController({
       [],
       true,
     );
+    const facilitySection = create('section', 'hq-major-facilities');
+    facilitySection.append(create('h3', '', '重要設施 · 選擇後顯示實際步行路線'));
+    const majorCards = create('div', 'hq-facility-cards');
+    for (const destination of importantFacilities()) {
+      const button = create('button');
+      button.type = 'button';
+      button.dataset.facility = destination.id;
+      button.append(
+        create('strong', '', `${destination.code}　${destination.name}`),
+        create('span', '', `${destination.floor} · ${wingName(destination.wing)}`),
+      );
+      button.onclick = () => mark(destination);
+      majorCards.append(button);
+    }
+    facilitySection.append(majorCards);
+    content.append(facilitySection);
     const controls = create('div', 'hq-form-row');
     const floorSelect = create('select');
     floorSelect.setAttribute('aria-label', '導覽樓層');
@@ -288,7 +396,9 @@ export function createHQController({
     svg.setAttribute('role', 'img');
     const legend = create('div', 'hq-map-legend');
     legend.append(
-      create('span', '', '電梯／樓梯'),
+      create('span', '', '四處電梯／樓梯'),
+      create('span', 'special', '重要設施'),
+      create('span', 'issue', '畫面問題（待核對／已確認）'),
       create('span', 'range', '大型射擊訓練場'),
       create('span', 'player', '目前位置'),
     );
@@ -302,17 +412,24 @@ export function createHQController({
     const rangeButton = create('button', '', '標記 7F 大型射擊訓練場');
     rangeButton.type = 'button';
     rangeButton.onclick = () => mark(rangeDestination());
-    const liftButton = create('button', '', '標記本層主電梯');
+    const liftButton = create('button', '', '標記最近電梯／樓梯');
     liftButton.type = 'button';
-    liftButton.onclick = () =>
+    liftButton.onclick = () => {
+      const core = nearestCore(motor.position);
       mark({
-        x: HQ.lift.x,
+        x: core.x,
         y: current.y,
-        z: HQ.lift.z + 7,
+        z: core.z + 7,
         floor: current.id,
-        wing: 'front',
-        name: '主電梯與維修樓梯',
+        wing: core.wing,
+        name: `${core.code} ${core.name}`,
+        coreId: core.id,
+        transit: 'lift',
       });
+    };
+    const issueButton = create('button', '', '畫面問題紀錄');
+    issueButton.type = 'button';
+    issueButton.onclick = issuePanel;
     const clearButton = create('button', '', '清除場景標記');
     clearButton.type = 'button';
     clearButton.onclick = () => {
@@ -321,7 +438,7 @@ export function createHQController({
       redraw();
       notify('已清除導覽標記');
     };
-    quick.append(rangeButton, liftButton, clearButton);
+    quick.append(rangeButton, liftButton, issueButton, clearButton);
     content.append(
       controls,
       grid,
@@ -335,6 +452,7 @@ export function createHQController({
     function redraw() {
       const floor = HQ_STOPS.find((f) => f.id === floorSelect.value) ?? current;
       const allRooms = roomsOnFloor(floor.id);
+      const facilities = importantFacilities().filter((f) => floor.y >= f.y && floor.y < f.top);
       const query = search.value.trim().toLowerCase();
       const rooms = allRooms.filter(
         (room) =>
@@ -344,6 +462,20 @@ export function createHQController({
       drawMap(svg, floor, wingSelect.value, allRooms);
       summary.textContent = `${floor.id} ${floor.name} · ${rooms.length} 間房室${rooms.length > 70 ? '（先顯示 70 間）' : ''}`;
       list.replaceChildren();
+      for (const facility of facilities.filter(
+        (f) =>
+          (wingSelect.value === 'all' || f.wing === wingSelect.value) &&
+          (!query || `${f.code} ${f.name}`.toLowerCase().includes(query)),
+      )) {
+        const button = create('button', 'hq-facility-result');
+        button.type = 'button';
+        button.append(
+          create('strong', '', `${facility.code} ${facility.name}`),
+          create('small', '', `${facility.floor} · ${wingName(facility.wing)}`),
+        );
+        button.onclick = () => mark(facility);
+        list.append(button);
+      }
       if (!rooms.length)
         list.append(
           create(
@@ -372,9 +504,111 @@ export function createHQController({
     });
     redraw();
   }
-  function elevator() {
+  function issuePanel() {
+    const point = { ...motor.position },
+      floor = floorAt(point.y),
+      wing = wingIdAt(point);
     const content = show(
-      '電梯樓層選擇',
+      '畫面問題紀錄',
+      `記錄目前位置：${floor.id} · ${wingName(wing)} · X ${point.x.toFixed(1)} / Y ${point.y.toFixed(1)} / Z ${point.z.toFixed(1)}。回報先列為「待核對」，不代表系統已確認。`,
+      [],
+      true,
+    );
+    const note = create('textarea');
+    note.rows = 3;
+    note.maxLength = 1500;
+    note.placeholder = '例如：面向北側時牆面閃爍、樓梯交接有縫隙。';
+    note.setAttribute('aria-label', '畫面問題描述');
+    const save = create('button', '', '記錄目前位置');
+    save.type = 'button';
+    const status = create('p', 'hq-map-note');
+    save.onclick = () => {
+      if (!note.value.trim()) {
+        status.textContent = '請先簡述看到的問題。';
+        note.focus();
+        return;
+      }
+      issueLog.add({ position: point, floor: floor.id, wing, note: note.value.trim() });
+      note.value = '';
+      status.textContent = '已儲存在本機；導覽圖會標示此位置。';
+      redraw();
+    };
+    const exportButton = create('button', '', '匯出紀錄 JSON');
+    exportButton.type = 'button';
+    exportButton.onclick = () => {
+      const blob = new Blob([issueLog.export()], { type: 'application/json' }),
+        url = URL.createObjectURL(blob),
+        a = create('a');
+      a.href = url;
+      a.download = 'border-hq-visual-issues.json';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+    const back = create('button', '', '返回設施導覽');
+    back.type = 'button';
+    back.onclick = directory;
+    const actions = create('div', 'hq-actions');
+    actions.append(save, exportButton, back);
+    const list = create('div', 'hq-issue-list');
+    content.append(field('觀察到的畫面問題', note), actions, status, list);
+    function redraw() {
+      list.replaceChildren();
+      const records = issueLog.records;
+      if (!records.length) {
+        list.append(create('p', 'hq-map-note', '目前沒有已儲存的畫面問題。'));
+        return;
+      }
+      for (const record of records.slice().reverse()) {
+        const row = create('article', 'hq-issue-record');
+        row.append(
+          create(
+            'strong',
+            '',
+            `${HQ_ISSUE_STATUSES[record.status]} · ${record.floor} · ${wingName(record.wing)}`,
+          ),
+          create('p', '', record.note || record.title),
+          create(
+            'small',
+            '',
+            `${record.id} · X ${record.position.x.toFixed(1)} / Y ${record.position.y.toFixed(1)} / Z ${record.position.z.toFixed(1)}`,
+          ),
+        );
+        const buttons = create('div', 'hq-actions');
+        const locate = create('button', '', '標記位置');
+        locate.type = 'button';
+        locate.onclick = () =>
+          mark({
+            ...record.position,
+            name: `${HQ_ISSUE_STATUSES[record.status]} ${record.note || record.title}`,
+            floor: record.floor,
+            wing: record.wing,
+            issueId: record.id,
+          });
+        const fixed = create('button', '', record.status === 'fixed' ? '重新開啟' : '標為已修復');
+        fixed.type = 'button';
+        fixed.onclick = () => {
+          issueLog.setStatus(record.id, record.status === 'fixed' ? 'reported' : 'fixed');
+          redraw();
+        };
+        const remove = create('button', '', '刪除');
+        remove.type = 'button';
+        remove.onclick = () => {
+          issueLog.remove(record.id);
+          redraw();
+        };
+        buttons.append(locate, fixed, remove);
+        row.append(buttons);
+        list.append(row);
+      }
+    }
+    redraw();
+  }
+  function elevator(coreId = 'main') {
+    const selectedLift = liftFor(coreId),
+      lift = selectedLift.system;
+    const core = transitCores().find((c) => c.id === (selectedLift.record.id ?? 'main')) ?? transitCores()[0];
+    const content = show(
+      `${core.code ?? ''} ${core.name ?? '電梯'} · 樓層選擇`,
       `目前 ${floorAt(lift.snapshot.y).id} · 高度 ${lift.snapshot.y.toFixed(1)} m。先進入轎廂，再選擇目的樓層。`,
       [],
       true,
@@ -471,12 +705,14 @@ export function createHQController({
     }
     if (object.kind === 'liftCall') {
       notify(
-        lift.request(object.text) ? '電梯呼叫已送出 · 到站後雙扇門會開啟' : '電梯運行中，請到站後再呼叫',
+        liftFor(object.coreId).system.request(object.text)
+          ? '電梯呼叫已送出 · 到站後雙扇門會開啟'
+          : '電梯運行中，請到站後再呼叫',
       );
       return;
     }
     if (object.kind === 'lift') {
-      elevator();
+      elevator(object.coreId);
       return;
     }
     if (object.kind === 'loadout' || object.kind === 'missions') {
@@ -528,6 +764,10 @@ export function createHQController({
           },
         ]);
       show('大型射擊訓練場', rangeText(), actions);
+      return;
+    }
+    if (object.kind === 'issues' || object.kind === 'visualReport') {
+      issuePanel();
       return;
     }
     if (object.kind === 'directory') {
@@ -598,7 +838,7 @@ export function createHQController({
     if (object.kind === 'evacuation') {
       show(
         object.name,
-        '先沿環形走廊到達南側主服務核心，走維修樓梯下降至 1F；再沿正面中央大廳通過主入口離開。中庭的地面聯絡口亦可返回南翼。',
+        '先依指示找到最近的南／東／北／西服務核心，走樓梯下降至 1F，再沿環形主走廊前往南側正面大廳離開。四處核心均設有樓層標示與電梯。',
         [
           [
             '標記安全出口',
@@ -631,8 +871,25 @@ export function createHQController({
     if (inside) {
       const floor = floorAt(motor.position.y),
         wing = wingIdAt(motor.position);
-      breadcrumb.textContent = `BORDER / ${floor.id}　${wing === 'courtyard' ? '中央中庭' : wingName(wing)}　${floor.name}${lift.snapshot.moving ? '　｜ 電梯運行中' : ''}`;
+      const facility = facilityAt(motor.position),
+        currentLift = movingLift();
+      breadcrumb.textContent = `BORDER / ${floor.id}　${facility ? `${facility.code} ${facility.name}` : wing === 'courtyard' ? '中央中庭' : wingName(wing)}${currentLift?.system.snapshot.moving ? '　｜ ' + (currentLift.record.name ?? '電梯') + ' 運行中' : ''}`;
     }
+    tools.hidden = !inside || panel.open;
+    const nearbyIssue = issueLog.records
+      .filter((r) => r.status !== 'fixed' && Math.abs(r.position.y - motor.position.y) < 3)
+      .sort(
+        (a, b) =>
+          Math.hypot(a.position.x - motor.position.x, a.position.z - motor.position.z) -
+          Math.hypot(b.position.x - motor.position.x, b.position.z - motor.position.z),
+      )[0];
+    issueHud.hidden =
+      !inside ||
+      panel.open ||
+      !nearbyIssue ||
+      Math.hypot(nearbyIssue.position.x - motor.position.x, nearbyIssue.position.z - motor.position.z) > 30;
+    if (!issueHud.hidden)
+      issueHud.textContent = `△ ${HQ_ISSUE_STATUSES[nearbyIssue.status]} · ${nearbyIssue.note || nearbyIssue.title}`;
     waypointHud.hidden = !active || !waypoint || panel.open;
     if (!waypointHud.hidden) {
       const step = routeStep(motor.position, waypoint),
@@ -694,15 +951,21 @@ export function createHQController({
       waypoint = null;
       resetRoute();
       document.body.classList.remove('hq-inside');
-      prompt.hidden = breadcrumb.hidden = waypointHud.hidden = rangeHud.hidden = true;
+      prompt.hidden =
+        breadcrumb.hidden =
+        waypointHud.hidden =
+        rangeHud.hidden =
+        tools.hidden =
+        issueHud.hidden =
+          true;
     },
     update(dt, exploring, simulation = false) {
       active = exploring && !simulation;
       // Install nearby room collision and door records before physics/target work for this tick.
       interior.updateVisibility(motor.position, active);
       if (active) {
-        lift.update(dt, motor);
-        doorSystem.update(dt, motor.position, lift.snapshot.y, lift.snapshot.moving);
+        for (const entry of liftSystems) entry.system.update(dt, motor);
+        doorSystem.update(dt, motor.position, (coreId) => liftFor(coreId).system.snapshot);
       }
       if (seated) motor.velocity.x = motor.velocity.y = motor.velocity.z = 0;
       target =
@@ -739,6 +1002,13 @@ export function createHQController({
         pose,
         panel: panel.open,
         lift: lift.snapshot,
+        lifts: liftSystems.map(({ record, system }) => ({
+          id: record.id ?? 'main',
+          name: record.name,
+          ...system.snapshot,
+        })),
+        visualIssues: issueLog.records,
+        facility: facilityAt(motor.position)?.id ?? null,
         waypoint: waypoint ? { ...waypoint } : null,
         ...interior.diagnostics,
       };

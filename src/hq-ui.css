@@ -170,3 +170,145 @@
     max-height: 220px;
   }
 }
+.hq-major-facilities {
+  margin: 12px 0 20px;
+}
+.hq-major-facilities h3 {
+  color: #a6eaf0;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  margin-bottom: 10px;
+}
+.hq-facility-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.hq-facility-cards button {
+  padding: 12px;
+  background: linear-gradient(135deg, #12394b, #0e293c);
+  color: #d3f5f8;
+  border: 1px solid #367387;
+  text-align: left;
+  border-radius: 3px;
+}
+.hq-facility-cards button:hover,
+.hq-facility-cards button:focus-visible {
+  border-color: #5ee9f1;
+  box-shadow: inset 3px 0 #47d4e2;
+}
+.hq-facility-cards strong,
+.hq-facility-cards span {
+  display: block;
+}
+.hq-facility-cards strong {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.hq-facility-cards span {
+  font-size: 11px;
+  color: #8dbbc9;
+  margin-top: 4px;
+}
+.hq-room-list .hq-facility-result {
+  border-left: 3px solid #4bdbe6;
+  background: #163e50;
+}
+.hq-map-legend .special::before {
+  background: #79a9b2;
+}
+.hq-map-legend .issue::before {
+  background: #efc376;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+.hq-field-tools {
+  position: fixed;
+  right: 32px;
+  top: 374px;
+  z-index: 8;
+  max-width: 235px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hq-field-tools button {
+  cursor: pointer;
+  color: #a3eaf0;
+  background: #092e42eb;
+  border: 1px solid #376d81;
+  border-radius: 3px;
+  padding: 7px 10px;
+  font-size: 11px;
+}
+.hq-field-tools small {
+  display: block;
+  width: 100%;
+  color: #8eafb9;
+  text-align: right;
+  font-size: 10px;
+}
+.hq-field-tools[hidden],
+.hq-issue-nearby[hidden] {
+  display: none;
+}
+.hq-issue-nearby {
+  position: fixed;
+  left: 50%;
+  bottom: 110px;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  max-width: 45vw;
+  color: #f1cb88;
+  background: #302b20e8;
+  border: 1px solid #8e784f;
+  border-radius: 3px;
+  z-index: 7;
+  font-size: 12px;
+  pointer-events: none;
+}
+#hq-panel textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  min-height: 92px;
+  border: 1px solid #3b7184;
+  background: #0f2c3d;
+  color: #d7f3f5;
+  padding: 10px;
+  font: inherit;
+  border-radius: 3px;
+  margin-top: 8px;
+}
+.hq-issue-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 15px;
+}
+.hq-issue-record {
+  padding: 14px;
+  background: #153346;
+  border: 1px solid #355d70;
+  border-left: 3px solid #d6b571;
+  border-radius: 3px;
+}
+.hq-issue-record strong {
+  font-size: 13px;
+  color: #ecd098;
+}
+.hq-issue-record p {
+  font-size: 13px;
+  color: #d0e4e7;
+  overflow-wrap: anywhere;
+}
+.hq-issue-record small {
+  color: #82aebb;
+  font-size: 11px;
+}
+@media (max-width: 900px) {
+  .hq-facility-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hq-field-tools {
+    right: 15px;
+  }
+}

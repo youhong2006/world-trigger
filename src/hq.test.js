@@ -61,7 +61,11 @@ test('elevator carries a physical passenger to the roof and safely opens only th
   assert.equal(f.lift.snapshot.moving, false);
   assert.ok(Math.abs(f.motor.position.y - HQ.roof) < 0.02);
   assert.ok(f.interior.liftDoors.find((d) => d.name === '電梯 RF').progress > 0.98);
-  assert.ok(f.interior.liftDoors.filter((d) => d.name !== '電梯 RF').every((d) => d.progress < 0.01));
+  assert.ok(
+    f.interior.liftDoors
+      .filter((d) => (d.coreId ?? 'main') === 'main' && d.name !== '電梯 RF')
+      .every((d) => d.progress < 0.01),
+  );
   walkTo(f, 43, 205);
   assert.ok(Math.abs(f.motor.position.y - HQ.roof) < 0.02);
 });

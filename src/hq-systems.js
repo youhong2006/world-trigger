@@ -47,7 +47,19 @@ export function createDoorSystem(doors) {
       const near = Math.abs(u) < d.w / 2 + 0.65 && Math.abs(v) < 2.8 && Math.abs(p.y - d.y) < 2.7;
       const threshold =
         Math.abs(u) < d.w / 2 + 0.4 && Math.abs(v) < 0.8 && p.y < d.y + d.h && p.y + 1.75 > d.y;
-      if (d.kind === 'lift') d.access = !liftMoving && Math.abs(liftY - d.y) < 0.02;
+      if (d.kind === 'lift') {
+        // Each landing follows its own cabin. Numeric arguments remain compatible
+        // with the original single-core callers and fixtures.
+        const key = d.coreId ?? 'main';
+        let state;
+        if (typeof liftY === 'function') state = liftY(key);
+        else if (liftY instanceof Map) state = liftY.get(key);
+        else if (liftY && typeof liftY === 'object') state = liftY[key] ?? liftY;
+        else if (key !== 'main' && d.lift) state = d.lift;
+        else state = { y: liftY, moving: liftMoving };
+        state = state?.snapshot ?? state;
+        d.access = !!state && !state.moving && Math.abs(state.y - d.y) < 0.02;
+      }
       if (d.automatic && near && d.access) d.hold = 1.8;
       if (threshold && d.access) d.hold = Math.max(d.hold, 0.3);
       d.manual = Math.max(0, d.manual - dt);
@@ -73,13 +85,12 @@ export function createDoorSystem(doors) {
   return { update, activate };
 }
 export function createLiftSystem(lift, doors, collision) {
+  const x = lift.x ?? HQ.lift.x,
+    z = lift.z ?? HQ.lift.z;
   let requested = null,
     velocity = 0;
   const inside = (p) =>
-    Math.abs(p.x - HQ.lift.x) < 1.55 &&
-    Math.abs(p.z - HQ.lift.z) < 1.55 &&
-    p.y >= lift.y - 0.12 &&
-    p.y < lift.y + 2.6;
+    Math.abs(p.x - x) < 1.55 && Math.abs(p.z - z) < 1.55 && p.y >= lift.y - 0.12 && p.y < lift.y + 2.6;
   function request(id) {
     const f = HQ_STOPS.find((f) => f.id === id);
     if (!f || lift.moving) return false;
@@ -98,8 +109,8 @@ export function createLiftSystem(lift, doors, collision) {
         d.access = false;
       }
       const threshold =
-        Math.abs(motor.position.x - 43) < 1.9 &&
-        Math.abs(motor.position.z - 200.1) < 0.8 &&
+        Math.abs(motor.position.x - x) < 1.9 &&
+        Math.abs(motor.position.z - (z + 2.1)) < 0.8 &&
         Math.abs(motor.position.y - old) < 2.8;
       const closed = doors.every((d) => d.progress < 0.001);
       if (!threshold && closed) lift.moving = true;
@@ -122,7 +133,7 @@ export function createLiftSystem(lift, doors, collision) {
     }
     const dy = lift.y - old;
     if (boarding && dy) motor.position.y += dy;
-    lift.cabin.position.set(43, lift.y, 198);
+    lift.cabin.position.set(x, lift.y, z);
     lift.cabin.children[0].position.y = -0.09;
     collision.setHeight(lift.platform, lift.y - 0.18, 0.18);
     for (const f of lift.fixtures) {
@@ -139,7 +150,15 @@ export function createLiftSystem(lift, doors, collision) {
     update,
     inside,
     get snapshot() {
-      return { y: lift.y, target: lift.target, moving: lift.moving, requested: requested?.id ?? null };
+      return {
+        id: lift.id ?? 'main',
+        x,
+        z,
+        y: lift.y,
+        target: lift.target,
+        moving: lift.moving,
+        requested: requested?.id ?? null,
+      };
     },
   };
 }

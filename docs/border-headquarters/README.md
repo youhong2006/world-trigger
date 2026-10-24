@@ -25,3 +25,5 @@
 
 
 2026-10-23 已依使用者命令開始實作基地探索初版；主屋頂改為 350 m。完成範圍、操作、驗證及後續項目見 [implementation.md](implementation.md)，實際 9 張圖片路徑見 [references.md](references.md)。
+
+最新 v4 配置改為較少重複房間、四處交通核心及六個獨立特殊設施，包含單一大型地下遠征艇機庫。重要設施導覽與本機畫面問題標記見 [實作紀錄](implementation.md) 和 [畫面問題紀錄](visual-issues.md)；其中測試與發布狀態以實作紀錄為準。

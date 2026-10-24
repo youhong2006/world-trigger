@@ -2536,7 +2536,7 @@ body.editing-fire .ability-card {
 #hq-panel form {position:relative;}#hq-panel h2 {font-size:25px;margin:18px 0;}#hq-panel p {white-space:pre-line;line-height:1.9;}
 #hq-panel .hq-close {position:absolute;right:0;top:0;font-size:24px;padding:0 9px;}
 .hq-actions {display:flex;flex-wrap:wrap;gap:10px;margin-top:22px;}.hq-actions button {padding:11px 15px;color:#c6f8ff;border:1px solid #418899;background:#15394c;}
-#hq-training-exit {position:fixed;top:85px;left:50%;transform:translateX(-50%);z-index:15;background:#10354a;color:#bffbff;border:1px solid #39d8e7;padding:10px 18px;}
+#hq-training-exit {position:fixed;top:148px;left:50%;transform:translateX(-50%);z-index:15;background:#10354a;color:#bffbff;border:1px solid #39d8e7;padding:10px 18px;}
 .hq-inside #left-hud .trion-card { max-height:130px;overflow:hidden; }
 .hq-inside #body-panel, .hq-inside .weapon-actions, .hq-inside #weapon-slots { display:none; }
 .hq-inside .weapon-card { max-width:220px; }

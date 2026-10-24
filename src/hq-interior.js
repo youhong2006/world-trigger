@@ -7,13 +7,15 @@ import {
   HQ_SECTIONS,
   HQ_RANGE,
   HQ_ATRIUM,
+  HQ_CORES,
+  HQ_SPECIAL_FACILITIES,
   envelopeAt,
   wingFrame,
-  floorAt,
   sectionsForPosition,
-  stairFlights,
 } from './hq-layout.js';
 import { furnishHQRoom } from './hq-furnishings.js';
+import { buildHQTransit } from './hq-transit.js';
+import { buildHQSpecialFacility } from './hq-special-facilities.js';
 
 // Floors and stairs remain solid permanently; detailed rooms stream by sector.
 // Every rendered sector owns its colliders, doors and interactables as one unit.
@@ -25,7 +27,6 @@ export function createHQInterior({ scene, collision }) {
     matrix = new THREE.Matrix4();
   const objects = [],
     doors = [],
-    liftDoors = [],
     projections = [],
     scopes = [],
     cache = new Map(),
@@ -45,7 +46,8 @@ export function createHQInterior({ scene, collision }) {
           color,
           roughness: 0.78,
           emissive: color,
-          emissiveIntensity: color === '#37dce7' ? 0.72 : color === '#dce7eb' ? 0.36 : 0.16,
+          emissiveIntensity:
+            color === '#37dce7' || color === '#39deef' ? 0.9 : color === '#dce7eb' ? 0.36 : 0.08,
         }),
       );
     return materials.get(color);
@@ -93,8 +95,8 @@ export function createHQInterior({ scene, collision }) {
   }
   function sign(g, text, x, y, z, w = 3, h = 0.6, color = '#baf6fa', turn = 0) {
     const canvas = document.createElement('canvas');
-    canvas.width = 768;
-    canvas.height = Math.max(32, Math.round((768 * h) / w));
+    canvas.width = w < 2 ? 384 : 768;
+    canvas.height = Math.max(32, Math.round((canvas.width * h) / w));
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#152d42';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -298,7 +300,32 @@ export function createHQInterior({ scene, collision }) {
       s.projections.push(record);
       return record;
     }
-    return { group: g, g, box: B, sign: S, object: O, terminal: T, chair: C, table, rail, door, projection };
+    function light(ignored, x, y, z, color = '#39deef', intensity = 8, distance = 24) {
+      const p = point(x, z),
+        lamp = new THREE.PointLight(color, intensity, distance, 2);
+      lamp.position.set(p.x, y, p.z);
+      g.add(lamp);
+      return lamp;
+    }
+    return {
+      group: g,
+      g,
+      frame,
+      own: (resource) => {
+        s.owned.push(resource);
+        return resource;
+      },
+      box: B,
+      sign: S,
+      object: O,
+      terminal: T,
+      chair: C,
+      table,
+      rail,
+      door,
+      projection,
+      light,
+    };
   }
   function subtract(rects, hole) {
     return rects.flatMap((r) => {
@@ -315,10 +342,60 @@ export function createHQInterior({ scene, collision }) {
       ].filter((v) => v.x1 - v.x0 > 0.025 && v.z1 - v.z0 > 0.025);
     });
   }
-  const coreHoles = [
-    { x0: 41, x1: 45, z0: 196, z1: 200 },
-    { x0: 48, x1: 62, z0: 192, z1: 206 },
-  ];
+  const coreHoles = HQ_CORES.flatMap((core) => [
+    { x0: core.x - 2, x1: core.x + 2, z0: core.z - 2, z1: core.z + 2 },
+    { x0: core.x + 5, x1: core.x + 19, z0: core.z - 6, z1: core.z + 8 },
+  ]);
+  function facilityFrame(spec) {
+    const wing = wingFrame(spec.wing, spec.y),
+      center = transform(wing, spec.u, spec.v ?? 0);
+    return { ...center, rotation: wing.rotation };
+  }
+  function facilityBounds(spec, inset = 0) {
+    const frame = facilityFrame(spec),
+      c = Math.abs(Math.cos(frame.rotation)),
+      si = Math.abs(Math.sin(frame.rotation));
+    const w = Math.max(0, spec.w - inset * 2),
+      d = Math.max(0, spec.d - inset * 2);
+    const hw = (w * c + d * si) / 2,
+      hd = (w * si + d * c) / 2;
+    return { x0: frame.x - hw, x1: frame.x + hw, z0: frame.z - hd, z1: frame.z + hd };
+  }
+  function protectedPoint(section, u, v, margin = 1) {
+    const f = wingFrame(section.wing, section.y),
+      p = transform(f, section.u + u, v);
+    if (
+      HQ_CORES.some(
+        (core) =>
+          p.x > core.x - 8 - margin &&
+          p.x < core.x + 23 + margin &&
+          p.z > core.z - 12 - margin &&
+          p.z < core.z + 16 + margin,
+      )
+    )
+      return true;
+    if (section.wing === 'front' && section.y >= 0 && section.y < 18 && Math.abs(p.x) < 19 + margin)
+      return true;
+    if (
+      section.wing === 'front' &&
+      section.y >= HQ_ATRIUM.y &&
+      section.y < HQ_ATRIUM.top &&
+      p.x > HQ_ATRIUM.minX - margin &&
+      p.x < HQ_ATRIUM.maxX + margin &&
+      p.z > HQ_ATRIUM.minZ - margin &&
+      p.z < HQ_ATRIUM.maxZ + margin
+    )
+      return true;
+    return HQ_SPECIAL_FACILITIES.some(
+      (spec) =>
+        spec.wing === section.wing &&
+        section.y >= spec.y &&
+        section.y < spec.top &&
+        Math.abs(section.u + u - spec.u) < spec.w / 2 + margin &&
+        Math.abs(v - (spec.v ?? 0)) < spec.d / 2 + margin,
+    );
+  }
+
   const floorScopes = [];
   function floorRects(y) {
     const e = envelopeAt(y),
@@ -357,9 +434,18 @@ export function createHQInterior({ scene, collision }) {
         { x0: 66, x1: HQ_RANGE.maxU, z0: frame.z + HQ_RANGE.vMin, z1: frame.z + HQ_RANGE.vMax },
       );
     }
+    for (const spec of HQ_SPECIAL_FACILITIES) {
+      if (f.y > spec.y && f.y < spec.top) {
+        const bounds = facilityBounds(spec, 4);
+        if (spec.kind === 'hangar') {
+          const centerZ = facilityFrame(spec).z;
+          holes.push({ ...bounds, z1: centerZ - 4 }, { ...bounds, z0: centerZ + 4 });
+        } else holes.push(bounds);
+      }
+    }
     for (const h of holes) rects = subtract(rects, h);
     for (const r of rects)
-      box(s.g, (r.x0 + r.x1) / 2, f.y - 0.22, (r.z0 + r.z1) / 2, r.x1 - r.x0, 0.22, r.z1 - r.z0, '#a5b5c2');
+      box(s.g, (r.x0 + r.x1) / 2, f.y - 0.22, (r.z0 + r.z1) / 2, r.x1 - r.x0, 0.22, r.z1 - r.z0, '#344b5f');
     finish(s);
   }
   // A multi-storey hall must retain its distant ceiling and balconies when ordinary
@@ -441,71 +527,14 @@ export function createHQInterior({ scene, collision }) {
     );
   finish(rangeCeiling);
   rangeGraphics.push(rangeCeiling);
-  // Service core, landings and cabin are always present, including floors far above the first occupied band.
-  const coreScopes = [];
-  for (const f of HQ_STOPS) {
-    const s = scope(`${f.id} 服務核心`, f.y, 'core'),
-      a = apiFor(s),
-      height = f.id === 'RF' ? 3.3 : ROOM_HEIGHT;
-    coreScopes.push(s);
-    a.box(s.g, 38, f.y, 198, 0.18, height, 24, '#8a9eaf');
-    a.box(s.g, 46, f.y, 198, 0.18, height, 24, '#8a9eaf');
-    a.box(s.g, 43, f.y, 195.8, 4, height, 0.18, '#587086');
-    for (const x of [40.8, 45.2]) a.box(s.g, x, f.y, 198, 0.18, height, 4.2, '#7a91a6');
-    a.box(s.g, 43, f.y + 2.8, 200.1, 4, height - 2.8, 0.18, '#849bae');
-    const d = a.door(s.g, {
-      x: 43,
-      y: f.y,
-      z: 200.1,
-      w: 3,
-      h: 2.8,
-      name: `電梯 ${f.id}`,
-      automatic: false,
-      kind: 'lift',
-    });
-    liftDoors.push(d);
-    a.terminal(s.g, `呼叫電梯 ${f.id}`, 46.8, f.y, 210, 'liftCall', f.id);
-    a.sign(s.g, `${f.id} / 電梯 ←　維修樓梯 →`, 52, f.y + 2.8, 211, 16, 0.55);
-    a.box(s.g, 62, f.y, 199, 0.15, height, 18, '#849bae');
-    finish(s);
-  }
-  const flights = stairFlights(),
-    stairScopes = [];
-  for (const f of flights) {
-    let s = stairScopes.find((s) => s.name === `維修樓梯 ${Math.floor(f.index / 4)}`);
-    if (!s) {
-      s = scope(`維修樓梯 ${Math.floor(f.index / 4)}`, f.y, 'stairs');
-      stairScopes.push(s);
-    }
-    for (let i = 0; i < f.steps; i++) {
-      const z = f.back ? 203 - ((i + 0.5) * 8) / f.steps : 195 + ((i + 0.5) * 8) / f.steps;
-      box(s.g, f.x, f.y, z, f.w, ((i + 1) * f.rise) / f.steps, 8 / f.steps + 0.001, '#a2b5c7');
-    }
-    box(s.g, 55, f.y + f.rise - 0.18, f.back ? 193.5 : 204.5, 14, 0.18, 3, '#b1c1cd');
-    for (const edge of [f.x - f.w / 2 - 0.06, f.x + f.w / 2 + 0.06])
-      for (let i = 0; i < 4; i++)
-        box(
-          s.g,
-          edge,
-          f.y + (i * f.rise) / 4,
-          199 + (f.back ? 1 : -1) * (3 - i * 2),
-          0.08,
-          1.1 + f.rise / 4,
-          2,
-          '#7290a7',
-        );
-    box(s.g, 55, f.y + f.rise, f.back ? 192.1 : 205.9, 14, 1.1, 0.1, '#7190a8');
-  }
-  for (const s of stairScopes) finish(s);
+  const transit = buildHQTransit({ scope, apiFor, box, finish, collision, cube, material, root, register });
+  const { lifts, lift, liftDoors, coreScopes, stairScopes, foundations, roofScopes } = transit;
   const basementY = HQ.basementY ?? -12;
-  const foundation = scope('地下核心底板', basementY, 'stairs');
-  box(foundation.g, 55, basementY - 0.2, 204.5, 14, 0.2, 3, '#a5b5c2');
-  finish(foundation);
   const gateScope = scope('正面大型入口', 0, 'gate'),
     gateAPI = apiFor(gateScope);
   gateAPI.door(gateScope.g, { x: 0, y: 0, z: 247.5, w: 14, h: 18, name: 'BORDER 正面大門', kind: 'gate' });
   gateAPI.door(gateScope.g, { x: -12, y: 0, z: 249.4, w: 2.6, h: 3, name: 'BORDER 人員入口' });
-  gateAPI.sign(gateScope.g, 'BORDER / MAIN GATE', 0, 19.5, 249, 22, 1);
+  gateAPI.sign(gateScope.g, 'H01 / BORDER 本部正面入口', 0, 19.5, 249, 22, 1);
   finish(gateScope);
   // Main entrance hall has an uninterrupted ground-level route, not a raised plinth/ramp.
   const lobby = scope('正面入口大廳', 0, 'lobby'),
@@ -526,64 +555,78 @@ export function createHQInterior({ scene, collision }) {
   la.terminal(lobby.g, '接待／任務登記', 12, 0, 234, 'missions');
   for (const x of [-12, 12])
     for (const z of [223, 219, 215]) la.chair(lobby.g, x, 0, z, '大廳等候座椅', x > 0 ? Math.PI : 0);
-  la.sign(lobby.g, 'BORDER DEFENSE ORGANIZATION', 0, 9, lobbyInner + 1.1, 25, 2.2, '#d9f7ff');
+  la.sign(lobby.g, 'H01 / 本部接待大廳', 0, 9, lobbyInner + 1.1, 25, 2.2, '#d9f7ff');
   la.sign(lobby.g, '← 西側設施　　中央中庭 ↑　　服務電梯・東側設施 →', 0, 3, 221, 20, 0.55);
   finish(lobby);
   const roof = scope('RF 通訊與觀測', HQ.roof, 'roof'),
     ra = apiFor(roof);
-  for (const x of [40.8, 45.2]) ra.box(roof.g, x, HQ.roof, 198, 0.2, 3.3, 4.2, '#839aad');
-  ra.box(roof.g, 43, HQ.roof, 195.8, 4.6, 3.3, 0.18, '#678198');
-  ra.box(roof.g, 43, HQ.roof + 3.3, 198, 4.6, 0.18, 4.6, '#a8bdc9');
   for (const x of [-36, -18, 0]) ra.box(roof.g, x, HQ.roof, 176, 6, 2.2, 4, '#5c7285');
   ra.terminal(roof.g, '觀測／全基地導覽', 0, HQ.roof, 204, 'radar');
   ra.chair(roof.g, -10, HQ.roof, 207, '屋頂長椅');
   finish(roof);
-  // Physical cabin carries the player. Its front shutter closes while travelling.
-  const cabin = new THREE.Group();
-  cabin.name = 'BORDER 全樓層電梯';
-  root.add(cabin);
-  const floorMesh = new THREE.Mesh(cube, material('#60798e'));
-  floorMesh.scale.set(3.8, 0.18, 3.8);
-  cabin.add(floorMesh);
-  const liftSolid = collision.add({ x: 43, y: -0.18, z: 198, w: 3.8, h: 0.18, d: 3.8 }),
-    fixtures = [];
-  function cabinBox(x, y, z, w, h, d, color, front = false) {
-    const m = new THREE.Mesh(cube, material(color));
-    m.position.set(x, y + h / 2, z);
-    m.scale.set(w, h, d);
-    cabin.add(m);
-    fixtures.push({
-      m,
-      x,
-      y,
-      z,
-      w,
-      h,
-      d,
-      front,
-      solid: collision.add({ x: x + 43, y, z: z + 198, w, h, d }),
-    });
+  // Landmark facilities are hand-composed halls, not copies of ordinary room modules.
+  const facilityScopes = [];
+  for (const spec of HQ_SPECIAL_FACILITIES) {
+    const s = scope(`${spec.floor} ${spec.name}`, spec.y, 'specialFacility');
+    s.facility = spec;
+    const a = apiFor(s, facilityFrame(spec));
+    buildHQSpecialFacility(a, { ...spec, h: spec.h ?? spec.top - spec.y });
+    for (const side of [-1, 1]) {
+      a.sign(
+        s.g,
+        `${spec.code ?? spec.id.toUpperCase()} / ${spec.name}`,
+        side * (spec.w / 2 + 0.35),
+        spec.y + 3.3,
+        0,
+        Math.min(15, spec.d / 3),
+        1.05,
+        '#baf6fa',
+        (side * Math.PI) / 2,
+      );
+      a.sign(
+        s.g,
+        `${spec.floor}　重要設施　${spec.name}`,
+        side * (spec.w / 2 + 0.38),
+        spec.y + 2.15,
+        0,
+        Math.min(13, spec.d / 3),
+        0.5,
+        '#87c6d9',
+        (side * Math.PI) / 2,
+      );
+    }
+    finish(s);
+    facilityScopes.push(s);
   }
-  cabinBox(-1.85, 0, 0, 0.12, 2.9, 3.8, '#6c879b');
-  cabinBox(1.85, 0, 0, 0.12, 2.9, 3.8, '#6c879b');
-  cabinBox(0, 0, -1.85, 3.8, 2.9, 0.12, '#567386');
-  cabinBox(0, 2.9, 0, 3.8, 0.12, 3.8, '#c2e6e9');
-  cabinBox(0, 0, 1.85, 3.8, 2.9, 0.12, '#58758b', true);
-  const panel = new THREE.Mesh(cube, material('#37dce7'));
-  panel.position.set(0.9, 1.4, -1.76);
-  panel.scale.set(0.65, 0.8, 0.02);
-  cabin.add(panel);
-  const liftControl = {
-    id: 'lift-control',
-    type: 'terminal',
-    name: '電梯樓層控制',
-    kind: 'lift',
-    x: 43.9,
-    y: 1.3,
-    z: 196.35,
-  };
-  objects.push(liftControl);
-  const lift = { cabin, platform: liftSolid, fixtures, control: liftControl, y: 0, target: 0, moving: false };
+  const facilityGalleryScopes = [];
+  for (const spec of HQ_SPECIAL_FACILITIES)
+    for (const f of HQ_FLOORS.filter((f) => f.y > spec.y && f.y < spec.top)) {
+      const s = scope(`${f.id} ${spec.name}環廊`, f.y, 'specialGallery'),
+        a = apiFor(s, facilityFrame(spec));
+      // Custom multi-storey halls own their gallery guards and stair openings.
+      // Adding another generic rail would block the hangar's stair landings and
+      // overlap the command centre's existing balcony geometry.
+      if (spec.kind !== 'command' && spec.kind !== 'hangar') {
+        const hx = spec.w / 2 - 4,
+          hz = spec.d / 2 - 4;
+        for (const x of [-hx, hx]) a.rail(s.g, x, f.y, 0, 0.08, hz * 2);
+        for (const z of [-hz, hz]) a.rail(s.g, 0, f.y, z, hx * 2, 0.08);
+      }
+      for (const x of [-spec.w / 2 + 2, spec.w / 2 - 2])
+        a.sign(
+          s.g,
+          `${f.id} / ${spec.name} 觀察環廊`,
+          x,
+          f.y + 2.6,
+          0,
+          14,
+          0.7,
+          '#baf6fa',
+          x > 0 ? Math.PI / 2 : -Math.PI / 2,
+        );
+      finish(s);
+      facilityGalleryScopes.push(s);
+    }
 
   function roomStructure(s, room, section) {
     const wf = wingFrame(section.wing, section.y),
@@ -610,40 +653,66 @@ export function createHQInterior({ scene, collision }) {
   }
   function corridor(s, section) {
     const f = wingFrame(section.wing, section.y),
-      center = transform(f, section.u, 0),
-      a = apiFor(s, { ...center, rotation: f.rotation }),
+      center = transform(f, section.u, 0);
+    const a = apiFor(s, { ...center, rotation: f.rotation }),
       g = s.g,
       y = section.y;
-    for (const v of [-71, -47, -25, 0, 25, 47, 71]) {
-      a.box(g, 0, y + 0.012, v, section.w, 0.015, 0.1, '#37dce7', false);
-      for (let u = -section.w / 2 + 6; u < section.w / 2; u += 16) {
-        const p = transform(f, section.u + u, v);
-        const inLobby = section.wing === 'front' && y >= 0 && y < 18 && Math.abs(p.x) < 18;
-        const inAtrium =
-          section.wing === 'front' &&
-          y >= HQ_ATRIUM.y &&
-          y < HQ_ATRIUM.top &&
-          p.x > HQ_ATRIUM.minX &&
-          p.x < HQ_ATRIUM.maxX &&
-          p.z > HQ_ATRIUM.minZ &&
-          p.z < HQ_ATRIUM.maxZ;
-        if (!inLobby && !inAtrium) a.box(g, u, y + ROOM_HEIGHT - 0.15, v, 7, 0.055, 0.8, '#dce7eb', false);
+    const rows = [-71, -47, -25, 0, 25, 47, 71];
+    // Floor guidance remains flush; structural ribs frame the main circulation instead of repeated doors.
+    for (const v of rows) {
+      for (let u = -section.w / 2 + 4; u < section.w / 2; u += 8) {
+        if (protectedPoint(section, u, v, 5)) continue;
+        const width = v === 0 ? 8 : 4;
+        a.box(g, u, y + 0.002, v, 7.8, 0.004, width, v === 0 ? '#253c50' : '#2d465b', false);
+        a.box(g, u, y + 0.008, v - width / 2 + 0.16, 7.5, 0.008, 0.055, '#37dce7', false);
+        a.box(g, u, y + 0.008, v + width / 2 - 0.16, 7.5, 0.008, 0.055, '#4d7890', false);
+        a.box(g, u, y + ROOM_HEIGHT - 0.12, v, 5, 0.05, 0.48, '#b2dce5', false);
       }
     }
-    // Three cross passages link the six bands of small rooms without walking through another room.
     for (const u of [-section.w / 2, -section.w / 6, section.w / 6, section.w / 2]) {
-      a.box(g, u, y + 0.014, 0, 0.1, 0.015, HQ.wingDepth - 8, '#69899f', false);
+      for (const v of [-58, -36, -14, 14, 36, 58]) {
+        if (!protectedPoint(section, u, v, 3)) a.box(g, u, y + 0.012, v, 0.07, 0.008, 18, '#537a91', false);
+      }
     }
-    a.sign(
-      g,
-      `${section.floor} ${section.name}　　服務核心 →`,
-      0,
-      y + 3.8,
-      -4.93,
-      Math.min(13, section.w - 0.5),
-      0.5,
-      '#baf6fa',
-    );
+    for (const u of [-section.w / 2 + 1, section.w / 2 - 1]) {
+      if (protectedPoint(section, u, 0, 9)) continue;
+      for (const v of [-5.25, 5.25]) {
+        a.box(g, u, y, v, 0.38, ROOM_HEIGHT, 0.6, '#263e53');
+        a.box(g, u, y + 0.35, v - Math.sign(v) * 0.32, 0.11, ROOM_HEIGHT - 0.7, 0.035, '#37dce7', false);
+      }
+      a.box(g, u, y + ROOM_HEIGHT - 0.45, 0, 0.5, 0.45, 11.1, '#253d53');
+    }
+    for (const v of [-78, 78])
+      if (!protectedPoint(section, 0, v, 3)) {
+        a.box(g, 0, y + 0.15, v, section.w - 0.5, ROOM_HEIGHT - 0.4, 0.32, '#2b4258');
+        a.box(g, 0, y + 0.55, v - Math.sign(v) * 0.18, section.w - 2, 0.08, 0.025, '#37dce7', false);
+        a.box(
+          g,
+          0,
+          y + ROOM_HEIGHT - 0.65,
+          v - Math.sign(v) * 0.18,
+          section.w - 2,
+          0.14,
+          0.025,
+          '#4e718a',
+          false,
+        );
+      }
+    if (!protectedPoint(section, 0, 0, 12)) {
+      const label = section.rooms.length ? '支援室區' : '連絡走廊 / 開放轉乘區';
+      for (const side of [-1, 1])
+        a.sign(
+          g,
+          `${section.floor}　${section.name}　${label}`,
+          0,
+          y + 3.5,
+          side * 4.75,
+          Math.min(19, section.w - 4),
+          0.72,
+          '#baf6fa',
+          side < 0 ? 0 : Math.PI,
+        );
+    }
   }
   function rangeSection(s, section) {
     const f = wingFrame('front', HQ_RANGE.y),
@@ -695,7 +764,7 @@ export function createHQInterior({ scene, collision }) {
     }
     a.sign(
       g,
-      'BORDER / LIVE FIRE TRAINING',
+      'TR-02 / 大型實體射擊訓練場',
       (lo + hi) / 2,
       y + 12,
       HQ_RANGE.vMin + 0.25,
@@ -729,7 +798,7 @@ export function createHQInterior({ scene, collision }) {
       a.terminal(g, '樓層與設施導覽', -24, y, envelopeAt(y).innerFront + 6 - f.z, 'directory');
     } else if (y === 0) {
       for (const u of [-40, 40]) {
-        a.terminal(g, '全基地交通導覽', u, y, 0, 'directory');
+        a.terminal(g, '全基地交通導覽', u, y, 8, 'directory');
         a.chair(g, u + 4, y, -8, '入口交誼座椅');
       }
     }
@@ -765,6 +834,20 @@ export function createHQInterior({ scene, collision }) {
           name: dy ? '上層觀戰迴廊入口' : '個人排名戰大廳入口',
         });
     }
+    for (const side of [-1, 1])
+      for (const dy of [0, STOREY]) {
+        a.sign(
+          g,
+          `${dy ? '3F' : '2F'} / TR-01 個人排名戰大廳`,
+          side < 0 ? lo - 0.35 : hi + 0.35,
+          y + dy + 4.2,
+          corridorZ,
+          16,
+          0.95,
+          '#baf6fa',
+          (side * Math.PI) / 2,
+        );
+      }
     const board = document.createElement('canvas');
     board.width = 1536;
     board.height = 768;
@@ -776,9 +859,9 @@ export function createHQInterior({ scene, collision }) {
     ctx.fillStyle = '#193448';
     ctx.textAlign = 'center';
     ctx.font = 'bold 64px sans-serif';
-    ctx.fillText('BORDER / PERSONAL RANK', 768, 110);
+    ctx.fillText('TR-01 / 個人排名戰訓練大廳', 768, 110);
     ctx.font = '32px sans-serif';
-    ctx.fillText('LOCAL TRAINING / INDIVIDUAL RANK', 768, 185);
+    ctx.fillText('2F－3F　個人訓練・模擬戰鬥入口', 768, 185);
     for (let row = 0; row < 5; row++)
       for (let col = 0; col < 12; col++) {
         const x = 24 + col * 124,
@@ -919,14 +1002,21 @@ export function createHQInterior({ scene, collision }) {
     for (const s of coreScopes)
       s.g.visible = exploring && nearby && Math.abs(s.y - position.y) < STOREY * 1.5;
     for (const s of stairScopes) s.g.visible = exploring && nearby && Math.abs(s.y - position.y) < 10;
-    foundation.g.visible = exploring && Math.abs(position.y - basementY) < 8;
+    for (const s of foundations) s.g.visible = exploring && Math.abs(position.y - basementY) < 8;
+    for (const s of roofScopes) s.g.visible = !exploring || position.y > HQ.roof - 12;
     lobby.g.visible = exploring && nearby && position.y < 20 && position.y > -5;
     for (const s of atriumScopes)
       s.g.visible =
         exploring && nearby && position.y >= HQ_ATRIUM.y - STOREY && position.y <= HQ_ATRIUM.top + STOREY;
     gateScope.g.visible = true;
     roof.g.visible = !exploring || position.y > HQ.roof - 12;
-    cabin.visible = exploring && nearby && Math.abs(lift.y - position.y) < 10;
+    for (const item of lifts) item.cabin.visible = exploring && nearby && Math.abs(item.y - position.y) < 10;
+    for (const s of facilityScopes) {
+      const spec = s.facility;
+      s.g.visible = exploring && nearby && position.y >= spec.y - STOREY && position.y <= spec.top + STOREY;
+    }
+    for (const s of facilityGalleryScopes)
+      s.g.visible = exploring && nearby && Math.abs(position.y - s.y) < STOREY * 1.5;
   }
   updateVisibility({ x: 0, y: 0, z: HQ.front + 52 }, false);
   return {
@@ -935,6 +1025,8 @@ export function createHQInterior({ scene, collision }) {
     doors,
     liftDoors,
     lift,
+    lifts,
+    facilities: HQ_SPECIAL_FACILITIES,
     projections,
     updateVisibility,
     get diagnostics() {
@@ -948,7 +1040,11 @@ export function createHQInterior({ scene, collision }) {
         loadedRooms: [...cache.values()].reduce((n, s) => n + s.section.rooms.length, 0),
         objects: objects.length,
         doors: doors.length,
-        stairFlights: flights.length,
+        stairFlights: transit.totalStairFlights,
+        stairFlightsPerCore: transit.flightsPerCore,
+        stairCores: HQ_CORES.length,
+        liftCores: lifts.length,
+        specialFacilities: HQ_SPECIAL_FACILITIES.length,
         instances: scopes.reduce((n, s) => n + s.instances, 0),
         range: {
           floor: HQ_RANGE.floor,

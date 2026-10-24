@@ -7,6 +7,9 @@ import {
   HQ_SECTIONS,
   HQ_ROOMS,
   HQ_RANGE,
+  HQ_CORES,
+  HQ_SPECIAL_FACILITIES,
+  specialFacilityBounds,
   wingAt,
   wingFrame,
   wingPoint,
@@ -23,21 +26,45 @@ import { createShootingSystem, createWorldTrace } from './projectiles.js';
 import { createCollisionIndex, groundHeight } from './city-layout.js';
 import { clipExcavationTriangle } from './hq-terrain.js';
 import { fixture, walkTo, dashTo } from './hq-test-helpers.js';
+import { routeStep, resetRoute } from './hq-wayfinding.js';
 
 const close = (a, b, epsilon = 1e-6) => Math.abs(a - b) < epsilon;
+
+function followDirections(f, start, destination, label) {
+  f.place(start);
+  resetRoute();
+  let still = 0;
+  for (let i = 0; i < 20000; i++) {
+    const before = { ...f.motor.position };
+    if (Math.hypot(before.x - destination.x, before.z - destination.z) < 1) return;
+    const { point } = routeStep(before, destination);
+    f.step({ forward: 1 }, Math.atan2(before.x - point.x, before.z - point.z));
+    const after = f.motor.position;
+    assert.ok(close(after.y, start.y, 0.04), `${label}: route left its floor at ${JSON.stringify(after)}`);
+    still = Math.hypot(after.x - before.x, after.z - before.z) < 0.0001 ? still + 1 : 0;
+    if (still > 180)
+      assert.fail(`${label}: directions blocked at ${JSON.stringify(after)} before ${JSON.stringify(point)}`);
+  }
+  assert.fail(`${label}: directions never reached ${JSON.stringify(destination)}`);
+}
 
 test('whole-base layout gives every occupied level four usable wings, including the highest rooms', () => {
   assert.equal(new Set(HQ_SECTIONS.map((s) => s.id)).size, HQ_SECTIONS.length);
   assert.equal(new Set(HQ_ROOMS.map((r) => r.id)).size, HQ_ROOMS.length);
-  assert.ok(HQ_ROOMS.length > 1000, 'base must extend beyond the previous small occupied wing');
+  assert.ok(
+    HQ_ROOMS.length > 100 && HQ_ROOMS.length < 2000,
+    'ordinary rooms should be sparse instead of tens of thousands of copies',
+  );
   for (const f of HQ_FLOORS)
     for (const wing of HQ_WINGS) {
       const sections = HQ_SECTIONS.filter((s) => s.floor === f.id && s.wing === wing);
       assert.ok(sections.length > 1, `${f.id} ${wing} has no usable district`);
     }
   const highest = HQ_ROOMS.filter((r) => r.floor === HQ_FLOORS.at(-1).id);
-  assert.ok(highest.length > 20);
-  for (const wing of HQ_WINGS) assert.ok(highest.some((r) => r.wing === wing));
+  assert.ok(highest.length < 40, 'highest floors should preserve open circulation around unique facilities');
+  assert.ok(
+    HQ_WINGS.every((wing) => HQ_SECTIONS.some((s) => s.floor === HQ_FLOORS.at(-1).id && s.wing === wing)),
+  );
 });
 
 test('room metadata stays inside the tapered wing and preserves a clear central corridor', () => {
@@ -51,21 +78,14 @@ test('room metadata stays inside the tapered wing and preserves a clear central 
   }
 });
 
-test('160 m wings contain six finer room rows served by independent longitudinal corridors', () => {
-  const typical = HQ_SECTIONS.find(
-    (s) => s.kind === 'rooms' && s.floor === '20F' && s.wing === 'back' && s.rooms.length === 18,
-  );
-  assert.ok(typical, 'a normal district should use the full occupied wing depth');
-  assert.deepEqual(
-    [...new Set(typical.rooms.map((r) => r.z))].sort((a, b) => a - b),
-    [-58, -36, -14, 14, 36, 58],
-  );
-  for (const r of typical.rooms) {
-    assert.ok(r.w <= 14 && r.w >= 9, `${r.id} is not a finer room`);
-    assert.equal(r.d, 18);
-    assert.ok([0, -25, 25, -47, 47].includes(r.corridorV));
-    for (const corridor of [0, -25, 25, -47, 47])
-      assert.ok(Math.abs(r.z - corridor) >= r.d / 2 + 1.8, `${r.id} blocks corridor ${corridor}`);
+test('most districts remain open circulation instead of repeating rooms in every bay', () => {
+  const occupied = HQ_SECTIONS.filter((section) => section.rooms.length > 0);
+  assert.ok(occupied.length < HQ_SECTIONS.length / 4, 'repeated room districts still dominate the building');
+  assert.ok(HQ_SECTIONS.filter((section) => section.rooms.length === 0).length > HQ_SECTIONS.length * 0.75);
+  for (const section of occupied) {
+    assert.ok(section.rooms.length <= 4, `${section.id} is still packed with repeated cubicles`);
+    for (const room of section.rooms)
+      assert.ok(Math.abs(room.z) - room.d / 2 >= 4.5, 'main circulation must remain open');
   }
 });
 
@@ -185,8 +205,8 @@ test('each remote wing has a real walkable corridor at basement, middle and high
   const f = fixture();
   for (const y of [HQ_FLOORS[0].y, HQ_FLOORS[20].y, HQ_FLOORS.at(-1).y])
     for (const wing of HQ_WINGS) {
-      const start = wingPoint(wing, y, -20),
-        end = wingPoint(wing, y, 20);
+      const start = wingPoint(wing, y, 70),
+        end = wingPoint(wing, y, 100);
       f.place(start);
       walkTo(f, end.x, end.z);
       assert.ok(close(f.motor.position.y, y, 0.02), `${wing} y${y} lost its floor`);
@@ -194,7 +214,7 @@ test('each remote wing has a real walkable corridor at basement, middle and high
     }
 });
 
-test('secondary corridors and transverse aisles connect every room row across all four wings', () => {
+test('secondary corridors and room-edge transverse aisles remain connected across all four wings', () => {
   const f = fixture(),
     floor = HQ_FLOORS.find((f) => f.id === '20F');
   for (const wing of HQ_WINGS) {
@@ -206,9 +226,9 @@ test('secondary corridors and transverse aisles connect every room row across al
       assert.ok(close(f.motor.position.y, floor.y, 0.02), `${wing} corridor ${v}`);
     }
     const section = HQ_SECTIONS.filter(
-      (s) => s.floor === floor.id && s.wing === wing && s.kind === 'rooms',
+      (s) => s.floor === floor.id && s.wing === wing && s.rooms.length > 0,
     ).reduce((a, b) => (Math.abs(a.u - 180) < Math.abs(b.u - 180) ? a : b));
-    const u = section.u + section.w / 6,
+    const u = section.u + Math.max(...section.rooms.map((room) => room.x + room.w / 2)) + 1.6,
       start = wingPoint(wing, floor.y, u, -71),
       end = wingPoint(wing, floor.y, u, 71);
     f.place(start);
@@ -221,14 +241,13 @@ test('doors on all four rotated wings open into real furnished rooms and allow p
   const f = fixture(),
     floor = HQ_FLOORS.find((f) => f.id === '20F');
   for (const wing of HQ_WINGS) {
-    const room = HQ_ROOMS.find(
-      (r) => r.floor === floor.id && r.wing === wing && r.z === -14 && Math.abs(r.sectionU) > 70,
-    );
+    const room = HQ_ROOMS.find((r) => r.floor === floor.id && r.wing === wing && Math.abs(r.sectionU) > 70);
     assert.ok(room, wing + ' has no inner-row room');
     const u = room.sectionU + room.x,
-      v = room.z + room.d / 2;
-    const outside = wingPoint(wing, floor.y, u, v + 2),
-      inside = wingPoint(wing, floor.y, u, v - 2);
+      face = Math.cos(room.rotation ?? 0) >= 0 ? 1 : -1,
+      v = room.z + (face * room.d) / 2;
+    const outside = wingPoint(wing, floor.y, u, v + face * 2),
+      inside = wingPoint(wing, floor.y, u, v - face * 2);
     f.place(outside);
     const door = f.interior.doors.find((d) => d.name === room.name);
     assert.ok(door, room.name + ' was not streamed');
@@ -470,4 +489,190 @@ test('both first- and third-person hand muzzles clear live-booth controls and th
   walkTo(f, forward.x, forward.z);
   assert.ok(close(f.motor.position.y, HQ_RANGE.y, 0.02));
   assert.equal(f.motor.grounded, true);
+});
+
+test('unique landmark halls preserve eight-metre through routes and avoid all vertical service cores', () => {
+  const f = fixture();
+  assert.equal(HQ_SPECIAL_FACILITIES.filter((s) => s.kind === 'hangar').length, 1);
+  assert.equal(HQ_ROOMS.filter((s) => s.kind === 'hangar').length, 0);
+  for (const spec of HQ_SPECIAL_FACILITIES) {
+    const b = specialFacilityBounds(spec);
+    for (const core of HQ_CORES) {
+      assert.ok(
+        b.maxX < core.bounds.minX ||
+          b.minX > core.bounds.maxX ||
+          b.maxZ < core.bounds.minZ ||
+          b.minZ > core.bounds.maxZ,
+        `${spec.id} overlaps ${core.id}`,
+      );
+    }
+    const start = wingPoint(spec.wing, spec.y, spec.u - spec.w / 2 - 2, spec.v),
+      end = wingPoint(spec.wing, spec.y, spec.u + spec.w / 2 + 2, spec.v);
+    f.place(start);
+    dashTo(f, end.x, end.z);
+    assert.ok(close(f.motor.position.y, spec.y, 0.02), `${spec.id} through-route floor changed`);
+    assert.equal(f.motor.grounded, true);
+  }
+});
+
+test('hangar B1 bridge stays continuous above the one large B2 bay', () => {
+  const f = fixture(),
+    spec = HQ_SPECIAL_FACILITIES.find((s) => s.kind === 'hangar');
+  assert.equal(spec.floor, 'B2');
+  assert.ok(spec.w >= 400 && spec.d >= 130);
+  const y = spec.y + 6;
+  const start = wingPoint(spec.wing, spec.y, spec.u - spec.w / 2 - 2, 0),
+    end = wingPoint(spec.wing, spec.y, spec.u + spec.w / 2 + 2, 0);
+  f.place({ ...start, y });
+  dashTo(f, end.x, end.z);
+  assert.ok(close(f.motor.position.y, y, 0.02));
+  const openBay = wingPoint(spec.wing, spec.y, spec.u + 90, -25);
+  assert.equal(f.collision.surfaceHeightAt(openBay.x, openBay.z, y - 1, 0.38), spec.y);
+});
+
+test('command upper gallery offers a continuous protected detour around the double-height theatre', () => {
+  const f = fixture(),
+    spec = HQ_SPECIAL_FACILITIES.find((s) => s.kind === 'command'),
+    y = spec.y + 6;
+  const points = [
+    [-spec.w / 2 - 2, 0],
+    [-spec.w / 2 + 2, 0],
+    [-spec.w / 2 + 2, spec.d / 2 - 2],
+    [spec.w / 2 - 2, spec.d / 2 - 2],
+    [spec.w / 2 - 2, 0],
+    [spec.w / 2 + 2, 0],
+  ].map(([u, v]) => ({ ...wingPoint(spec.wing, spec.y, spec.u + u, v), y }));
+  f.place(points[0]);
+  for (const p of points.slice(1)) {
+    walkTo(f, p.x, p.z);
+    assert.ok(close(f.motor.position.y, y, 0.02), `upper gallery fell near ${p.x},${p.z}`);
+  }
+  const center = wingPoint(spec.wing, spec.y, spec.u, -10);
+  assert.equal(f.collision.surfaceHeightAt(center.x, center.z, y - 1, 0.38), spec.y);
+});
+
+test('all four service cores have a clear floor-level bypass and independent physical stairs', () => {
+  const f = fixture(),
+    flights = stairFlights();
+  assert.equal(HQ_CORES.length, 4);
+  for (const core of HQ_CORES) {
+    for (const y of [108, 300]) {
+      const x = core.x + 25;
+      f.place({ x, y, z: core.z - 17 });
+      walkTo(f, x, core.z + 18);
+      assert.ok(close(f.motor.position.y, y, 0.02), `${core.id} service bypass changed floors`);
+    }
+    const dx = core.x - HQ.lift.x,
+      dz = core.z - HQ.lift.z;
+    for (const flight of [flights[0], flights[69], flights.at(-1)]) {
+      const startZ = (flight.back ? 204.5 : 193.5) + dz,
+        endZ = (flight.back ? 193.5 : 204.5) + dz;
+      f.place({ x: flight.x + dx, y: flight.y, z: startZ });
+      walkTo(f, flight.x + dx, endZ);
+      assert.ok(close(f.motor.position.y, flight.y + flight.rise, 0.02), `${core.id} stair ${flight.index}`);
+    }
+  }
+});
+
+test('actual directory directions bypass all four cores and their call consoles in both directions', () => {
+  const f = fixture();
+  for (const y of [0, 108, 342])
+    for (const core of HQ_CORES)
+      for (const direction of [-1, 1]) {
+        const sideWing = core.wing === 'left' || core.wing === 'right',
+          frame = wingFrame(core.wing, y),
+          start = sideWing
+            ? { x: frame.x, y, z: core.z + direction * 26 }
+            : { x: core.x + direction * 26, y, z: frame.z },
+          destination = sideWing
+            ? { x: frame.x, y, z: core.z - direction * 26, wing: core.wing, name: core.name }
+            : { x: core.x - direction * 26, y, z: frame.z, wing: core.wing, name: core.name };
+        followDirections(f, start, destination, `${core.id} y${y} direction${direction}`);
+      }
+});
+
+test('directory directions preserve the command upper gallery and underground hangar bridge', () => {
+  const f = fixture();
+  for (const id of ['command', 'hangar'])
+    for (const direction of [-1, 1]) {
+      const spec = HQ_SPECIAL_FACILITIES.find((s) => s.id === id),
+        y = spec.y + 6,
+        start = { ...wingPoint(spec.wing, spec.y, spec.u + direction * (spec.w / 2 + 10), 0), y },
+        destination = {
+          ...wingPoint(spec.wing, spec.y, spec.u - direction * (spec.w / 2 + 10), 0),
+          y,
+          wing: spec.wing,
+          name: spec.name,
+        };
+      followDirections(f, start, destination, `${id} upper direction${direction}`);
+    }
+});
+
+test('four lifts carry passengers independently and expose only their own occupied landing', () => {
+  const f = fixture(),
+    destinations = ['20F', 'RF', 'B2', '35F'];
+  assert.equal(f.lifts.size, 4);
+  const expected = new Map(HQ_CORES.map((c) => [c.id, 0]));
+  for (const [index, core] of HQ_CORES.entries()) {
+    const system = f.lifts.get(core.id),
+      destination = destinations[index];
+    f.place({ x: core.x, y: system.snapshot.y, z: core.z });
+    assert.equal(system.request(destination), true);
+    for (let i = 0; i < 5000; i++) f.step();
+    const y = destination === 'RF' ? HQ.roof : HQ_FLOORS.find((x) => x.id === destination).y;
+    expected.set(core.id, y);
+    assert.ok(close(f.motor.position.y, y, 0.02), `${core.id} failed to carry passenger`);
+    for (const other of HQ_CORES) assert.equal(f.lifts.get(other.id).snapshot.y, expected.get(other.id));
+    for (const door of f.interior.liftDoors) {
+      if (close(door.y, expected.get(door.coreId)))
+        assert.ok(door.progress > 0.98, `${door.name} stayed closed`);
+      else assert.ok(door.progress < 0.01, `${door.name} opened into an empty shaft`);
+    }
+    walkTo(f, core.x, core.z + 7);
+    assert.ok(close(f.motor.position.y, y, 0.02));
+  }
+});
+
+test('hangar docking platform and both maintenance levels connect by walkable stairs', () => {
+  const f = fixture(),
+    spec = HQ_SPECIAL_FACILITIES.find((s) => s.kind === 'hangar');
+  const p = (u, v, dy = 0) => ({ ...wingPoint(spec.wing, spec.y, spec.u + u, v), y: spec.y + dy });
+  const follow = (points) => {
+    f.place(p(...points[0]));
+    for (const point of points.slice(1)) {
+      const destination = p(...point);
+      walkTo(f, destination.x, destination.z);
+      assert.ok(close(f.motor.position.y, destination.y, 0.02), `hangar stair ${point}`);
+    }
+  };
+  follow([
+    [0, -6, 0],
+    [0, -20, 3.2],
+  ]);
+  for (const side of [-1, 1])
+    follow([
+      [side * 195, 62, 0],
+      [side * 195, 40, 6],
+      [side * 205, 40, 6],
+      [side * 205, 66, 6],
+      [side * 195, 66, 6],
+      [side * 195, 52, 9],
+    ]);
+});
+
+test('command theatre tiers are physically reachable with normal walking and no jump', () => {
+  const f = fixture(),
+    spec = HQ_SPECIAL_FACILITIES.find((s) => s.kind === 'command');
+  f.place(wingPoint(spec.wing, spec.y, spec.u, 3));
+  for (const [v, rise] of [
+    [12, 0.8],
+    [26, 1.6],
+    [40, 2.4],
+  ]) {
+    const p = wingPoint(spec.wing, spec.y, spec.u, v);
+    walkTo(f, p.x, p.z);
+    assert.ok(close(f.motor.position.y, spec.y + rise, 0.02));
+    assert.equal(f.motor.grounded, true);
+    assert.equal(f.motor.lastLandingSpeed, 0);
+  }
 });

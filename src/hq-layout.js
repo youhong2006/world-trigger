@@ -22,6 +22,25 @@ export const HQ = Object.freeze({
   lift: { x: 43, z: 198, w: 4, d: 4 },
   stair: { minX: 48, maxX: 62, minZ: 192, maxZ: 206 },
 });
+// Four permanent, independently operated vertical circulation nodes.
+export const HQ_CORES = [
+  { id: 'main', code: 'T01', name: '正面交通核心', wing: 'front', x: 43, z: 198 },
+  { id: 'east', code: 'T02', name: '東側交通核心', wing: 'right', x: 520, z: -150 },
+  { id: 'north', code: 'T03', name: '北側交通核心', wing: 'back', x: 0, z: -440 },
+  { id: 'west', code: 'T04', name: '西側交通核心', wing: 'left', x: -520, z: -150 },
+].map((c) =>
+  Object.freeze({
+    ...c,
+    stairX: c.x + 12,
+    stairZ: c.z + 1,
+    approach: { x: c.x + 21, z: c.z + 14 },
+    bounds: { minX: c.x - 8, maxX: c.x + 23, minZ: c.z - 12, maxZ: c.z + 16 },
+  }),
+);
+export const HQ_CORE_HOLES = HQ_CORES.flatMap((c) => [
+  { x0: c.x - 2, x1: c.x + 2, z0: c.z - 2, z1: c.z + 2 },
+  { x0: c.x + 5, x1: c.x + 19, z0: c.z - 6, z1: c.z + 8 },
+]);
 export const HQ_RANGE = Object.freeze({
   floor: '7F',
   y: 36,
@@ -133,7 +152,7 @@ export function floorZone(number) {
 }
 const FACILITIES = {
   '遠征・後勤': [
-    ['hangar', '遠征艇整備區'],
+    ['warehouse', '遠征物資整備室'],
     ['warehouse', '物流倉庫'],
     ['utilities', '設備機房'],
     ['workshop', '後勤維修室'],
@@ -195,13 +214,13 @@ const FACILITIES = {
     ['lounge', '工作休息室'],
   ],
   '作戰・情報': [
-    ['command', '區域指揮室'],
+    ['operator', '區域值勤室'],
     ['operator', '操作員工作室'],
     ['meeting', '作戰會議室'],
     ['squad', '任務簡報室'],
   ],
   中央指揮: [
-    ['command', '中央指揮中心'],
+    ['study', '指揮資料室'],
     ['operator', '情報監控中心'],
     ['meeting', '高層會議室'],
     ['squad', '緊急任務準備室'],
@@ -231,6 +250,123 @@ export const HQ_STOPS = [
 export function floorAt(y) {
   return HQ_STOPS.reduce((a, b) => (Math.abs(a.y - y) <= Math.abs(b.y - y) ? a : b));
 }
+// The large facilities are unique volumes, rather than repeated ordinary room types.
+export const HQ_SPECIAL_FACILITIES = [
+  {
+    id: 'command',
+    code: 'CMD-01',
+    kind: 'command',
+    name: '中央指揮中心',
+    floor: '57F',
+    y: 336,
+    top: 348,
+    wing: 'back',
+    u: 260,
+    v: 0,
+    w: 120,
+    d: 100,
+  },
+  {
+    id: 'hangar',
+    code: 'HGR-01',
+    kind: 'hangar',
+    name: '地下遠征艇機庫',
+    floor: 'B2',
+    y: -12,
+    top: 0,
+    wing: 'back',
+    u: -260,
+    v: 0,
+    w: 420,
+    d: 140,
+  },
+  {
+    id: 'research',
+    code: 'LAB-01',
+    kind: 'lab',
+    name: '觸發器技術開發中心',
+    floor: '35F',
+    y: 204,
+    top: 210,
+    wing: 'right',
+    u: 110,
+    v: 0,
+    w: 100,
+    d: 90,
+  },
+  {
+    id: 'briefing',
+    code: 'BRF-01',
+    kind: 'briefing',
+    name: '立體投影戰術會議廳',
+    floor: '5F',
+    y: 24,
+    top: 30,
+    wing: 'front',
+    u: -320,
+    v: 0,
+    w: 90,
+    d: 80,
+  },
+  {
+    id: 'lounge',
+    code: 'LNG-01',
+    kind: 'lounge',
+    name: '隊員公共交誼廳',
+    floor: '1F',
+    y: 0,
+    top: 6,
+    wing: 'left',
+    u: -110,
+    v: 0,
+    w: 100,
+    d: 90,
+  },
+  {
+    id: 'mess',
+    code: 'MES-01',
+    kind: 'mess',
+    name: '隊員中央食堂',
+    floor: '12F',
+    y: 66,
+    top: 72,
+    wing: 'back',
+    u: -260,
+    v: 0,
+    w: 110,
+    d: 84,
+  },
+].map((f) =>
+  Object.freeze({
+    ...f,
+    h: f.top - f.y,
+    world: wingPoint(f.wing, f.y, f.u, f.v),
+    rotation: wingFrame(f.wing, f.y).rotation,
+    evidence: 'C',
+  }),
+);
+export function specialFacilityBounds(f, inset = 0) {
+  const side = f.wing === 'left' || f.wing === 'right',
+    p = f.world ?? wingPoint(f.wing, f.y, f.u, f.v);
+  const hw = (side ? f.d : f.w) / 2 - inset,
+    hd = (side ? f.w : f.d) / 2 - inset;
+  return { minX: p.x - hw, maxX: p.x + hw, minZ: p.z - hd, maxZ: p.z + hd };
+}
+export function specialFacilityAt(position) {
+  return (
+    HQ_SPECIAL_FACILITIES.find((f) => {
+      const b = specialFacilityBounds(f);
+      return (
+        position.y >= f.y - 0.25 &&
+        position.y < f.top - 0.15 &&
+        position.x > b.minX &&
+        position.x < b.maxX &&
+        position.z > b.minZ &&
+        position.z < b.maxZ
+      );
+    }) ?? null
+  );
+}
 export const HQ_SECTIONS = HQ_FLOORS.flatMap((f) =>
   HQ_WINGS.flatMap((wing, wi) => {
     const e = envelopeAt(f.y),
@@ -252,6 +388,69 @@ export const HQ_SECTIONS = HQ_FLOORS.flatMap((f) =>
         u - width / 2 < HQ_ATRIUM.maxX &&
         u + width / 2 > HQ_ATRIUM.minX;
       const lobby = wing === 'front' && f.y >= 0 && f.y < 18 && Math.abs(u) < width / 2 + 18;
+      const special = HQ_SPECIAL_FACILITIES.some(
+        (v) => v.wing === wing && f.y >= v.y && f.y < v.top && Math.abs(u - v.u) < v.w / 2 + width / 2,
+      );
+      const phase = ((Math.abs(f.number) + wi) % 3) - 1;
+      const selected = [Math.floor(count * 0.24) + phase, Math.floor(count * 0.75) + phase].includes(i);
+      const pool = FACILITIES[f.zone],
+        side = (i + wi + Math.abs(f.number)) % 2 ? 1 : -1;
+      const [type, name] = pool[(Math.abs(f.number) + wi + i) % pool.length];
+      const rows =
+        selected && !inRange && !atrium && !special
+          ? [
+              {
+                id: `${id}-r1`,
+                sectionId: id,
+                sectionU: u,
+                wing,
+                floor: f.id,
+                y: f.y,
+                x: 0,
+                z: side * ((i + wi) % 2 ? 58 : 36),
+                w: 30 + (Math.abs(f.number) % 2) * 4,
+                d: 18,
+                corridorV: side * ((i + wi) % 2 ? 47 : 25),
+                name: `${name} ${f.id}-${wi + 1}${String(i + 1).padStart(2, '0')}`,
+                kind: type,
+                variant: (i + wi + Math.abs(f.number)) % 9,
+                rotation: side > 0 ? Math.PI : 0,
+                evidence: 'C',
+              },
+            ]
+          : [];
+      const rooms = rows.filter((r) => {
+        const p = wingPoint(wing, f.y, u, r.z),
+          sideWing = wing === 'left' || wing === 'right',
+          hw = (sideWing ? r.d : r.w) / 2,
+          hd = (sideWing ? r.w : r.d) / 2;
+        if (wing === 'front' && f.y >= 0 && f.y < 18 && Math.abs(p.x) < hw + 19) return false;
+        if (
+          HQ_CORES.some(
+            (c) =>
+              p.x + hw > c.bounds.minX - 4 &&
+              p.x - hw < c.bounds.maxX + 4 &&
+              p.z + hd > c.bounds.minZ - 4 &&
+              p.z - hd < c.bounds.maxZ + 4,
+          )
+        )
+          return false;
+        if (
+          wing === 'front' &&
+          p.x + hw > 36 &&
+          p.x - hw < 70 &&
+          p.z + hd > wingFrame(wing, f.y).z - 6 &&
+          p.z - hd < 214
+        )
+          return false;
+        if (
+          (wing === 'front' || wing === 'back') &&
+          r.z < 0 &&
+          Math.abs(Math.abs(p.x) - (e.outerHalfW - HQ.wingDepth / 2)) < hw + 6
+        )
+          return false;
+        return true;
+      });
       const kind = inRange
         ? f.y === HQ_RANGE.y
           ? 'range'
@@ -262,69 +461,11 @@ export const HQ_SECTIONS = HQ_FLOORS.flatMap((f) =>
             : 'atriumGallery'
           : lobby
             ? 'lobby'
-            : 'rooms';
-      const pool = FACILITIES[f.zone],
-        rooms = inRange
-          ? []
-          : Array.from({ length: 18 }, (_, j) => {
-              const side = j < 9 ? -1 : 1,
-                row = Math.floor((j % 9) / 3),
-                index = j % 3,
-                [type, name] = pool[(i * 3 + j + wi) % pool.length];
-              const x = ((index - 1) * width) / 3,
-                z = side * (14 + 22 * row),
-                w = width / 3 - 3.2,
-                d = 18;
-              return {
-                id: `${id}-r${j + 1}`,
-                sectionId: id,
-                sectionU: u,
-                wing,
-                floor: f.id,
-                y: f.y,
-                x,
-                z,
-                w,
-                d,
-                corridorV: side * (row === 0 ? 0 : 3 + 22 * row),
-                name: `${name} ${wi + 1}${String(i + 1).padStart(2, '0')}-${j + 1}`,
-                kind: type,
-                variant: (i * 7 + j + wi) % 9,
-                rotation: side > 0 ? Math.PI : 0,
-                evidence: 'C',
-              };
-            }).filter((r) => {
-              const p = wingPoint(wing, f.y, u + r.x, r.z),
-                hw = r.w / 2,
-                hd = r.d / 2;
-              // Keep the entry, multi-level atrium and service core physically clear.
-              if (wing === 'front' && f.y >= 0 && f.y < 18 && Math.abs(p.x) < hw + 19) return false;
-              if (
-                wing === 'front' &&
-                (f.id === '2F' || f.id === '3F') &&
-                p.x + hw > HQ_ATRIUM.minX - 1 &&
-                p.x - hw < HQ_ATRIUM.maxX + 1 &&
-                p.z + hd > HQ_ATRIUM.minZ - 1 &&
-                p.z - hd < HQ_ATRIUM.maxZ + 1
-              )
-                return false;
-              if (
-                wing === 'front' &&
-                p.x + hw > 36 &&
-                p.x - hw < 66 &&
-                p.z + hd > wingFrame(wing, f.y).z - 6 &&
-                p.z - hd < 212
-              )
-                return false;
-              // Side-wing centerlines continue through both end wings instead of terminating at room walls.
-              if (
-                (wing === 'front' || wing === 'back') &&
-                r.z < 0 &&
-                Math.abs(Math.abs(p.x) - (e.outerHalfW - HQ.wingDepth / 2)) < hw + 5
-              )
-                return false;
-              return true;
-            });
+            : special
+              ? 'facility'
+              : rooms.length
+                ? 'rooms'
+                : 'concourse';
       return {
         id,
         floor: f.id,

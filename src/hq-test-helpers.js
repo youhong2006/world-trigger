@@ -55,11 +55,18 @@ export function fixture() {
   const motor = createCharacterMotor({ groundHeight, collision });
   motor.configure({ walkSpeed: 5, sprintSpeed: 14 });
   const doors = createDoorSystem(interior.doors),
-    lift = createLiftSystem(interior.lift, interior.liftDoors, collision);
+    lifts = new Map(
+      (interior.lifts ?? [interior.lift]).map((record) => [
+        record.id ?? 'main',
+        createLiftSystem(record, record.doors ?? interior.liftDoors, collision),
+      ]),
+    ),
+    lift = lifts.get('main') ?? lifts.values().next().value;
+  const liftState = (id) => lifts.get(id)?.snapshot;
   function step(input = {}, yaw = 0, dt = 1 / 120) {
     interior.updateVisibility(motor.position, true);
-    lift.update(dt, motor);
-    doors.update(dt, motor.position, lift.snapshot.y, lift.snapshot.moving);
+    for (const system of lifts.values()) system.update(dt, motor);
+    doors.update(dt, motor.position, liftState);
     motor.update(dt, input, yaw);
   }
   function place(point, yaw = 0) {
@@ -67,7 +74,7 @@ export function fixture() {
     motor.teleport(point, yaw);
   }
   place({ x: 0, y: 0, z: 256 });
-  return { scene, collision, interior, motor, doors, lift, step, place };
+  return { scene, collision, interior, motor, doors, lift, lifts, step, place };
 }
 export function walkTo(f, x, z, limit = 4000) {
   for (let i = 0; i < limit; i++) {

@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { fortressGeometry } from './hq-geometry.js';
-import { taperedVolume } from './hq-layout.js';
+import * as Layout from './hq-layout.js';
 import { BASE } from './city-layout.js';
 
 /** Hollow, gently tapered perimeter fortress. Dimensions below are model-local (1:16). */
 export function createHeadquarters({ scene, box, cylinder, solid }) {
+  const { taperedVolume } = Layout;
   const center = { x: 23, z: -117 };
   const scale = BASE.scale,
     width = BASE.width,
@@ -377,10 +378,11 @@ export function createHeadquarters({ scene, box, cylinder, solid }) {
       z1: center.z + halfD - thickness,
     },
   ];
-  const holes = [
-    { x0: worldX(41), x1: worldX(45), z0: worldZ(196), z1: worldZ(200) },
-    { x0: worldX(48), x1: worldX(62), z0: worldZ(192), z1: worldZ(206) },
-  ];
+  const coreDefinitions = Layout.HQ_CORES ?? [{ x: 43, z: 198 }];
+  const holes = coreDefinitions.flatMap((core) => [
+    { x0: worldX(core.x - 2), x1: worldX(core.x + 2), z0: worldZ(core.z - 2), z1: worldZ(core.z + 2) },
+    { x0: worldX(core.x + 5), x1: worldX(core.x + 19), z0: worldZ(core.z - 6), z1: worldZ(core.z + 8) },
+  ]);
   let pieces = roofRects;
   for (const hole of holes)
     pieces = pieces.flatMap((r) => {

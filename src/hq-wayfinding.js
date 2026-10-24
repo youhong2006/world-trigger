@@ -80,6 +80,71 @@ export function roomsOnFloor(id) {
     .map((room) => ({ ...room, point: roomPoint(room) }));
 }
 
+export function transitCores() {
+  return (
+    Layout.HQ_CORES ?? [{ id: 'main', name: '南側主電梯', code: 'T-S', wing: 'front', ...Layout.HQ.lift }]
+  );
+}
+export function nearestCore(position) {
+  const wing = wingIdAt(position);
+  return transitCores().reduce((best, core) => {
+    const score = (c) => Math.hypot(position.x - c.x, position.z - c.z) + (c.wing === wing ? 0 : 180);
+    return score(core) < score(best) ? core : best;
+  });
+}
+export function importantFacilities() {
+  const special = (Layout.HQ_SPECIAL_FACILITIES ?? []).map((f) => ({
+    ...f,
+    ...Layout.wingPoint(f.wing, f.y, f.u ?? 0, f.v ?? 0),
+    facilityId: f.id,
+  }));
+  const range = Layout.HQ_RANGE,
+    atrium = Layout.HQ_ATRIUM;
+  if (atrium)
+    special.push({
+      id: 'rank-atrium',
+      code: 'TR-01',
+      name: '個人排名戰大廳',
+      floor: atrium.floor,
+      y: atrium.y,
+      top: atrium.top,
+      wing: 'front',
+      x: (atrium.minX + atrium.maxX) / 2,
+      z: Layout.wingFrame('front', atrium.y).z,
+      w: atrium.maxX - atrium.minX,
+      d: atrium.maxZ - atrium.minZ,
+    });
+  if (range)
+    special.push({
+      id: 'shooting-range',
+      code: 'TR-02',
+      name: '大型實體射擊訓練場',
+      floor: range.floor,
+      wing: 'front',
+      ...Layout.wingPoint('front', range.y, -144, range.boothV),
+      top: range.top,
+      w: range.maxU - range.minU,
+      d: range.vMax - range.vMin,
+      mapPoint: Layout.wingPoint('front', range.y, (range.minU + range.maxU) / 2, 0),
+    });
+  return special;
+}
+export function facilityAt(position) {
+  return (
+    importantFacilities().find((f) => {
+      if (position.y < f.y - 0.2 || position.y >= f.top) return false;
+      const center = f.mapPoint ?? f,
+        angle = Layout.wingFrame(f.wing, f.y).rotation;
+      const dx = position.x - center.x,
+        dz = position.z - center.z;
+      return (
+        Math.abs(dx * Math.cos(angle) - dz * Math.sin(angle)) <= f.w / 2 &&
+        Math.abs(dx * Math.sin(angle) + dz * Math.cos(angle)) <= f.d / 2
+      );
+    }) ?? null
+  );
+}
+
 // Room records remain data; the route cache holds only a handful of currently used floor/wing lists.
 const routeRoomCache = new Map();
 function wingRooms(floor, wing) {
@@ -98,44 +163,45 @@ const nearest = (values, value) =>
   values.reduce((a, b) => (Math.abs(a - value) <= Math.abs(b - value) ? a : b));
 
 // Return the next walkable corridor segment. Rooms first lead to their own doorway;
-// crossing between the six rows happens in transverse alleys, never through a neighbour's wall.
+// crossing between room rows happens in transverse alleys, never through a neighbour's wall.
 function computeRouteStep(from, destination) {
   const floor = Layout.floorAt(from.y),
     vertical = Math.abs(destination.y - from.y) > 2;
+  const core = transitCores().find((c) => c.id === destination.coreId) ?? nearestCore(from);
   let goal = vertical
-    ? { x: Layout.HQ.lift.x, y: floor.y, z: Layout.HQ.lift.z + 7, name: '主電梯', wing: 'front' }
+    ? {
+        x: core.x,
+        y: floor.y,
+        z: core.z + 7,
+        name: core.name ?? '服務電梯',
+        wing: core.wing,
+        coreId: core.id,
+      }
     : destination;
   const current = wingIdAt(from);
-  const wantsLift = vertical || /主電梯/.test(destination.name ?? '');
-  if (wantsLift && current === 'front') {
-    if (Math.abs(from.x - Layout.HQ.lift.x) < 2 && Math.abs(from.z - Layout.HQ.lift.z) < 2.5)
-      return {
-        point: { ...from },
-        label: `使用轎廂面板前往 ${destination.floor ?? Layout.floorAt(destination.y).id}`,
-        vertical,
-      };
-    if (Math.hypot(from.x - Layout.HQ.lift.x, from.z - (Layout.HQ.lift.z + 7)) > 1.5) {
-      // Approach the shaft from its front; the east-side service aisle avoids the stairs.
-      goal = { ...goal, x: 64, z: 212 };
-    }
-  }
-  const target = goal.wing ?? wingIdAt(goal);
+  const wantsLift = vertical || destination.transit === 'lift' || !!destination.coreId;
   const finish = (point, label) => ({
     point,
     label: vertical ? `${label} → ${destination.floor ?? Layout.floorAt(destination.y).id}` : label,
     vertical,
   });
-  if (!WING_ORDER.includes(current) || !WING_ORDER.includes(target)) return finish(goal, goal.name);
-  if (wantsLift && current === 'front') {
-    const atDoor = Math.hypot(from.x - Layout.HQ.lift.x, from.z - (Layout.HQ.lift.z + 7)) < 1.5;
-    if (atDoor) return finish({ x: Layout.HQ.lift.x, y: floor.y, z: Layout.HQ.lift.z + 7 }, '使用電梯面板');
-    if (from.x >= 34 && from.x <= 70 && from.z >= 211) {
-      const z = Math.abs(from.x - Layout.HQ.lift.x) > 1 ? 212 : Layout.HQ.lift.z + 7;
-      return finish({ x: Layout.HQ.lift.x, y: floor.y, z }, '由前側進入主電梯大廳');
-    }
-    if (Math.abs(from.x - 64) < 1.25 && from.z >= Layout.wingFrame('front', floor.y).z - 1)
-      return finish({ x: 64, y: floor.y, z: 212 }, '沿服務通道前往電梯大廳');
+  if (wantsLift && current === core.wing) {
+    const door = { x: core.x, y: floor.y, z: core.z + 7 };
+    if (Math.abs(from.x - core.x) < 2 && Math.abs(from.z - core.z) < 2.5)
+      return finish({ ...from }, `使用 ${core.code ?? core.name} 轎廂面板`);
+    if (Math.hypot(from.x - door.x, from.z - door.z) < 1.5)
+      return finish(door, `進入 ${core.name}，使用選層面板`);
+    if (from.x >= core.x - 9 && from.x <= core.x + 27 && from.z >= core.z + 13 && from.z <= core.z + 20)
+      return finish(
+        { x: core.x, y: floor.y, z: Math.abs(from.x - core.x) > 1 ? core.z + 14 : core.z + 7 },
+        `由前側進入 ${core.name}`,
+      );
+    if (Math.abs(from.x - (core.x + 21)) < 1.25 && Math.abs(from.z - core.z) < 80)
+      return finish({ x: core.x + 21, y: floor.y, z: core.z + 14 }, `沿服務通道前往 ${core.name}`);
+    goal = { ...goal, x: core.x + 21, z: core.z + 14, wing: core.wing };
   }
+  const target = goal.wing ?? wingIdAt(goal);
+  if (!WING_ORDER.includes(current) || !WING_ORDER.includes(target)) return finish(goal, goal.name);
 
   const frame = Layout.wingFrame(current, floor.y),
     c = Math.cos(frame.rotation),
@@ -210,6 +276,10 @@ function computeRouteStep(from, destination) {
     const blocking = rooms.filter((r) => r.z + r.d / 2 > minV + 0.5 && r.z - r.d / 2 < maxV - 0.5);
     const candidates = [
       near,
+      ...transitCores().flatMap((core) => {
+        const points = [local({ x: core.x - 11, z: core.z - 14 }), local({ x: core.x + 25, z: core.z + 16 })];
+        return [Math.min(...points.map((p) => p.u)) - 1, Math.max(...points.map((p) => p.u)) + 1];
+      }),
       ...blocking.flatMap((r) => [r.sectionU + r.x - r.w / 2 - 1.6, r.sectionU + r.x + r.w / 2 + 1.6]),
     ];
     const valid = candidates.filter(
@@ -218,15 +288,18 @@ function computeRouteStep(from, destination) {
         Math.abs(u) < frame.halfLength - 3 &&
         !blocking.some((r) => Math.abs(u - r.sectionU - r.x) < r.w / 2 + 0.65),
     );
-    // The lift/stair lobby is a service corridor, but its shaft is not a cross passage.
-    const safe = valid.filter(
-      (u) =>
-        current !== 'front' ||
-        u < 34 ||
-        u > 68 ||
-        Math.max(v0, v1) < 186 - frame.z ||
-        Math.min(v0, v1) > 212 - frame.z,
-    );
+    // Every shaft and stairwell is approached from its marked service lobby.
+    const safe = valid.filter((u) => {
+      const a = world(u, v0),
+        b = world(u, v1);
+      return !transitCores().some(
+        (core) =>
+          Math.max(a.x, b.x) > core.x - 9 &&
+          Math.min(a.x, b.x) < core.x + 23 &&
+          Math.max(a.z, b.z) > core.z - 12 &&
+          Math.min(a.z, b.z) < core.z + 13,
+      );
+    });
     return (safe.length ? safe : valid).sort((a, b) => Math.abs(a - near) - Math.abs(b - near))[0] ?? near;
   };
   const changeCorridor = (v, near = start.u, predicate) => {
@@ -235,6 +308,27 @@ function computeRouteStep(from, destination) {
       ? finish(world(u, start.v), '沿走廊前往橫向通道')
       : finish(world(u, v), '由橫向通道換廊');
   };
+  for (const special of Layout.HQ_SPECIAL_FACILITIES ?? []) {
+    if (current !== special.wing || floor.y <= special.y || floor.y >= special.top) continue;
+    const lo = special.u - special.w / 2,
+      hi = special.u + special.w / 2;
+    const crosses = Math.min(start.u, goalLocal.u) < hi && Math.max(start.u, goalLocal.u) > lo;
+    if (!crosses) continue;
+    const right = goalLocal.u > (lo + hi) / 2,
+      entrance = right ? lo + 2 : hi - 2,
+      exit = right ? hi - 2 : lo + 2;
+    const edge = (special.v ?? 0) + special.d / 2 - 2;
+    let p;
+    if (right ? start.u < lo + 0.5 : start.u > hi - 0.5) p = { u: entrance, v: special.v ?? 0 };
+    else if (Math.abs(start.u - exit) < 1.2)
+      p =
+        Math.abs(start.v - (special.v ?? 0)) > 1
+          ? { u: exit, v: special.v ?? 0 }
+          : { u: right ? hi + 1.5 : lo - 1.5, v: special.v ?? 0 };
+    else if (Math.abs(start.v - edge) > 1) p = { u: entrance, v: edge };
+    else p = { u: exit, v: edge };
+    return finish(world(p.u, p.v), `沿 ${special.code} ${special.name} 上層迴廊前進`);
+  }
   const atrium = Layout.HQ_ATRIUM;
   if (current === 'front' && atrium && Math.abs(floor.y - atrium.y - (Layout.HQ.storeyHeight ?? 6)) < 0.1) {
     const lo = atrium.minX,
@@ -297,6 +391,91 @@ function computeRouteStep(from, destination) {
   return finish(world(goalLocal.u, goalLocal.v), label);
 }
 
+// A ring corridor can intersect a transit core as the shell tapers higher up.
+// Route around the actual shaft/stair envelope, leaving the +Z lift lobby and
+// east stair approach outside the obstacle. Visibility graph corners keep the
+// detour safe for either direction and for adjacent wings.
+function avoidTransitCores(from, step) {
+  const goal = step.point;
+  const contains = (r, p) => p.x > r.minX && p.x < r.maxX && p.z > r.minZ && p.z < r.maxZ;
+  const rectangles = transitCores()
+    .map((core) => ({
+      core,
+      minX: core.x - 6.2,
+      maxX: core.x + 20.2,
+      minZ: core.z - 13.2,
+      // The call console sits at z+12; include it rather than routing through it.
+      maxZ: core.z + 14.2,
+    }))
+    .filter((r) => !contains(r, from) && !contains(r, goal));
+  const crosses = (a, b, r) => {
+    // Clip to the open interior, allowing an unobstructed segment along an edge.
+    let lo = 0,
+      hi = 1;
+    for (const axis of ['x', 'z']) {
+      const delta = b[axis] - a[axis],
+        min = r[axis === 'x' ? 'minX' : 'minZ'] + 0.01,
+        max = r[axis === 'x' ? 'maxX' : 'maxZ'] - 0.01;
+      if (Math.abs(delta) < 1e-8) {
+        if (a[axis] <= min || a[axis] >= max) return false;
+      } else {
+        const t0 = (min - a[axis]) / delta,
+          t1 = (max - a[axis]) / delta;
+        lo = Math.max(lo, Math.min(t0, t1));
+        hi = Math.min(hi, Math.max(t0, t1));
+        if (lo >= hi) return false;
+      }
+    }
+    return lo < hi;
+  };
+  const obstruction = rectangles.find((r) => crosses(from, goal, r));
+  if (!obstruction) return step;
+  const points = [
+    from,
+    goal,
+    ...rectangles.flatMap((r) => [
+      { x: r.minX, z: r.minZ },
+      { x: r.maxX, z: r.minZ },
+      { x: r.maxX, z: r.maxZ },
+      { x: r.minX, z: r.maxZ },
+    ]),
+  ];
+  const distance = points.map(() => Infinity),
+    previous = points.map(() => -1),
+    done = new Set();
+  distance[0] = 0;
+  while (done.size < points.length) {
+    let next = -1;
+    for (let i = 0; i < points.length; i++)
+      if (!done.has(i) && (next < 0 || distance[i] < distance[next])) next = i;
+    if (next < 0 || !Number.isFinite(distance[next]) || next === 1) break;
+    done.add(next);
+    for (let i = 0; i < points.length; i++) {
+      if (done.has(i) || rectangles.some((r) => crosses(points[next], points[i], r))) continue;
+      const candidate =
+        distance[next] + Math.hypot(points[i].x - points[next].x, points[i].z - points[next].z);
+      if (candidate < distance[i]) {
+        distance[i] = candidate;
+        previous[i] = next;
+      }
+    }
+  }
+  let next = 1;
+  if (previous[next] < 0) return step;
+  const indices = [next];
+  while (previous[next] > 0) {
+    next = previous[next];
+    indices.unshift(next);
+  }
+  const detour = indices.map((i) => ({ ...points[i], y: goal.y }));
+  return {
+    ...step,
+    point: detour[0],
+    detour,
+    label: `沿服務通道繞過 ${obstruction.core.code} ${obstruction.core.name}${step.vertical ? ' → ' + step.label : ''}`,
+  };
+}
+
 // Keep the current straight segment while crossing an aisle. Without this, snapping
 // to the nearest parallel corridor halfway across would point the player backwards.
 let pendingRoute = null;
@@ -323,16 +502,31 @@ export function routeStep(from, destination) {
     (pendingRoute.key !== key ||
       pendingRoute.floor !== floor ||
       offSegment > 4 ||
-      Math.hypot(from.x - pendingRoute.last.x, from.z - pendingRoute.last.z) > 24 ||
-      Math.hypot(from.x - pendingRoute.step.point.x, from.z - pendingRoute.step.point.z) < 0.85)
+      Math.hypot(from.x - pendingRoute.last.x, from.z - pendingRoute.last.z) > 24)
   )
     pendingRoute = null;
+  if (
+    pendingRoute &&
+    Math.hypot(from.x - pendingRoute.step.point.x, from.z - pendingRoute.step.point.z) < 0.85
+  ) {
+    if (pendingRoute.remaining.length) {
+      pendingRoute.step = { ...pendingRoute.step, point: pendingRoute.remaining.shift() };
+      pendingRoute.origin = { ...from };
+    } else pendingRoute = null;
+  }
   if (pendingRoute) {
     pendingRoute.last = { ...from };
     return pendingRoute.step;
   }
-  const step = computeRouteStep(from, destination);
+  const step = avoidTransitCores(from, computeRouteStep(from, destination));
   if (Math.hypot(from.x - step.point.x, from.z - step.point.z) > 0.85)
-    pendingRoute = { key, floor, step, origin: { ...from }, last: { ...from } };
+    pendingRoute = {
+      key,
+      floor,
+      step,
+      remaining: step.detour?.slice(1) ?? [],
+      origin: { ...from },
+      last: { ...from },
+    };
   return step;
 }
