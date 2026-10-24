@@ -3,8 +3,8 @@ import { fortressGeometry } from './hq-geometry.js';
 import * as Layout from './hq-layout.js';
 import { BASE } from './city-layout.js';
 
-/** Hollow, gently tapered perimeter fortress. Dimensions below are model-local (1:16). */
-export function createHeadquarters({ scene, box, cylinder, solid }) {
+/** Gently tapered fortress; the city uses a sealed body, while the independent HQ world keeps its hollow shell. */
+export function createHeadquarters({ scene, box, cylinder, solid, solidBody = false }) {
   const { taperedVolume } = Layout;
   const center = { x: 23, z: -117 };
   const scale = BASE.scale,
@@ -106,7 +106,26 @@ export function createHeadquarters({ scene, box, cylinder, solid }) {
   const xInsetAt = (y) => (insetX * Math.max(0, y)) / height;
   const zInsetAt = (y) => (insetZ * Math.max(0, y)) / height;
 
-  // Front wall is cut around both real portals, rather than hiding a door on a solid wall.
+  if (solidBody) {
+    // One convex volume seals every city-side floor and the former courtyard.
+    // Detailed rooms and their collision live exclusively in the separate HQ world.
+    solid?.(
+      taperedVolume({
+        x: center.x,
+        z: center.z,
+        w: width,
+        d: depth,
+        y: basementY,
+        h: roofY - basementY,
+        topX: center.x,
+        topZ: center.z,
+        topW: width - insetX * 2,
+        topD: depth - insetZ * 2,
+      }),
+    );
+  }
+
+  // In the interior world the front skins retain real door openings.
   // x0/x1 denote ground-level x coordinates; outer endpoints follow the tapered facade.
   function frontStrip(x0, x1, y0, y1, inner = false) {
     const atX = (x, y) =>
@@ -140,21 +159,24 @@ export function createHeadquarters({ scene, box, cylinder, solid }) {
     gateR = worldX(7),
     sideL = worldX(-13.3),
     sideR = worldX(-10.7);
-  frontStrip(left, right, basementY, 0);
-  for (const [a, b] of [
-    [left, sideL],
-    [sideR, gateL],
-    [gateR, right],
-  ])
-    frontStrip(a, b, 0, 3 / scale);
-  frontStrip(left, gateL, 3 / scale, 18 / scale);
-  frontStrip(gateR, right, 3 / scale, 18 / scale);
-  frontStrip(left, right, 18 / scale, roofY);
-  // The entry axis opens directly to the central courtyard as well as the front corridor.
-  frontStrip(left + thickness, right - thickness, basementY, 0, true);
-  frontStrip(left + thickness, gateL, 0, 18 / scale, true);
-  frontStrip(gateR, right - thickness, 0, 18 / scale, true);
-  frontStrip(left + thickness, right - thickness, 18 / scale, roofY, true);
+  if (solidBody) frontStrip(left, right, basementY, roofY);
+  else {
+    frontStrip(left, right, basementY, 0);
+    for (const [a, b] of [
+      [left, sideL],
+      [sideR, gateL],
+      [gateR, right],
+    ])
+      frontStrip(a, b, 0, 3 / scale);
+    frontStrip(left, gateL, 3 / scale, 18 / scale);
+    frontStrip(gateR, right, 3 / scale, 18 / scale);
+    frontStrip(left, right, 18 / scale, roofY);
+    // The entry axis opens directly to the central courtyard as well as the front corridor.
+    frontStrip(left + thickness, right - thickness, basementY, 0, true);
+    frontStrip(left + thickness, gateL, 0, 18 / scale, true);
+    frontStrip(gateR, right - thickness, 0, 18 / scale, true);
+    frontStrip(left + thickness, right - thickness, 18 / scale, roofY, true);
+  }
 
   function backInnerStrip(x0, x1, y0, y1) {
     const atX = (x, y) =>
@@ -227,11 +249,13 @@ export function createHeadquarters({ scene, box, cylinder, solid }) {
       wallMaterial,
       4,
     );
-    if (y0 < 0) backInnerStrip(left + thickness, right - thickness, y0, y1);
-    else {
-      backInnerStrip(left + thickness, worldX(-2.4), 0, 4 / scale);
-      backInnerStrip(worldX(2.4), right - thickness, 0, 4 / scale);
-      backInnerStrip(left + thickness, right - thickness, 4 / scale, y1);
+    if (!solidBody) {
+      if (y0 < 0) backInnerStrip(left + thickness, right - thickness, y0, y1);
+      else {
+        backInnerStrip(left + thickness, worldX(-2.4), 0, 4 / scale);
+        backInnerStrip(worldX(2.4), right - thickness, 0, 4 / scale);
+        backInnerStrip(left + thickness, right - thickness, 4 / scale, y1);
+      }
     }
     for (const sign of [-1, 1]) {
       const x = sign < 0 ? left : right,
@@ -250,11 +274,13 @@ export function createHeadquarters({ scene, box, cylinder, solid }) {
         wallMaterial,
         sign < 0 ? 3 : 5,
       );
-      if (y0 < 0) sideInnerStrip(sign, back + thickness, front - thickness, y0, y1);
-      else {
-        sideInnerStrip(sign, back + thickness, center.z - 2.4 / scale, 0, 4 / scale);
-        sideInnerStrip(sign, center.z + 2.4 / scale, front - thickness, 0, 4 / scale);
-        sideInnerStrip(sign, back + thickness, front - thickness, 4 / scale, y1);
+      if (!solidBody) {
+        if (y0 < 0) sideInnerStrip(sign, back + thickness, front - thickness, y0, y1);
+        else {
+          sideInnerStrip(sign, back + thickness, center.z - 2.4 / scale, 0, 4 / scale);
+          sideInnerStrip(sign, center.z + 2.4 / scale, front - thickness, 0, 4 / scale);
+          sideInnerStrip(sign, back + thickness, front - thickness, 4 / scale, y1);
+        }
       }
     }
   }
@@ -269,17 +295,19 @@ export function createHeadquarters({ scene, box, cylinder, solid }) {
     box(x, 4 / scale, center.z, 0.3 / scale, 0.35 / scale, 5.5 / scale, '#455b73', true);
   }
   // No raised stone plinth. The courtyard surface sits flush with the city datum.
-  const courtyard = box(
-    center.x,
-    -0.2 / scale,
-    center.z,
-    innerWidth,
-    0.2 / scale,
-    innerDepth,
-    '#b1bdcb',
-    true,
-  );
-  courtyard.name = 'BORDER ground-level courtyard';
+  if (!solidBody) {
+    const courtyard = box(
+      center.x,
+      -0.2 / scale,
+      center.z,
+      innerWidth,
+      0.2 / scale,
+      innerDepth,
+      '#b1bdcb',
+      true,
+    );
+    courtyard.name = 'BORDER ground-level courtyard';
+  }
   const apron = new THREE.Mesh(
     new THREE.PlaneGeometry(70 / scale, 65 / scale),
     new THREE.MeshStandardMaterial({
@@ -362,27 +390,41 @@ export function createHeadquarters({ scene, box, cylinder, solid }) {
   // Continuous roof ring, with physical openings for the shared stairs and elevator.
   const halfW = width / 2 - insetX,
     halfD = depth / 2 - insetZ;
-  const roofRects = [
-    { x0: center.x - halfW, x1: center.x + halfW, z0: center.z + halfD - thickness, z1: center.z + halfD },
-    { x0: center.x - halfW, x1: center.x + halfW, z0: center.z - halfD, z1: center.z - halfD + thickness },
-    {
-      x0: center.x - halfW,
-      x1: center.x - halfW + thickness,
-      z0: center.z - halfD + thickness,
-      z1: center.z + halfD - thickness,
-    },
-    {
-      x0: center.x + halfW - thickness,
-      x1: center.x + halfW,
-      z0: center.z - halfD + thickness,
-      z1: center.z + halfD - thickness,
-    },
-  ];
+  const roofRects = solidBody
+    ? [{ x0: center.x - halfW, x1: center.x + halfW, z0: center.z - halfD, z1: center.z + halfD }]
+    : [
+        {
+          x0: center.x - halfW,
+          x1: center.x + halfW,
+          z0: center.z + halfD - thickness,
+          z1: center.z + halfD,
+        },
+        {
+          x0: center.x - halfW,
+          x1: center.x + halfW,
+          z0: center.z - halfD,
+          z1: center.z - halfD + thickness,
+        },
+        {
+          x0: center.x - halfW,
+          x1: center.x - halfW + thickness,
+          z0: center.z - halfD + thickness,
+          z1: center.z + halfD - thickness,
+        },
+        {
+          x0: center.x + halfW - thickness,
+          x1: center.x + halfW,
+          z0: center.z - halfD + thickness,
+          z1: center.z + halfD - thickness,
+        },
+      ];
   const coreDefinitions = Layout.HQ_CORES ?? [{ x: 43, z: 198 }];
-  const holes = coreDefinitions.flatMap((core) => [
-    { x0: worldX(core.x - 2), x1: worldX(core.x + 2), z0: worldZ(core.z - 2), z1: worldZ(core.z + 2) },
-    { x0: worldX(core.x + 5), x1: worldX(core.x + 19), z0: worldZ(core.z - 6), z1: worldZ(core.z + 8) },
-  ]);
+  const holes = solidBody
+    ? []
+    : coreDefinitions.flatMap((core) => [
+        { x0: worldX(core.x - 2), x1: worldX(core.x + 2), z0: worldZ(core.z - 2), z1: worldZ(core.z + 2) },
+        { x0: worldX(core.x + 5), x1: worldX(core.x + 19), z0: worldZ(core.z - 6), z1: worldZ(core.z + 8) },
+      ]);
   let pieces = roofRects;
   for (const hole of holes)
     pieces = pieces.flatMap((r) => {
@@ -599,8 +641,9 @@ export function createHeadquarters({ scene, box, cylinder, solid }) {
   scene.add(sideEmblem);
 
   return {
-    name: 'BORDER full-perimeter hollow fortress',
-    openRoof: true,
+    name: solidBody ? 'BORDER solid city landmark' : 'BORDER full-perimeter hollow fortress',
+    solidBody,
+    openRoof: !solidBody,
     courtyard: { width: innerWidth, depth: innerDepth },
     wallCount: 4,
     width,
@@ -609,7 +652,7 @@ export function createHeadquarters({ scene, box, cylinder, solid }) {
     towers: 4,
     emblems: 2,
     stoneFoundation: false,
-    occupiedWingDepth: thickness * scale,
+    occupiedWingDepth: solidBody ? 0 : thickness * scale,
     basementDepth: -basementY * scale,
     gate: {
       x: 0,

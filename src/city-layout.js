@@ -203,10 +203,9 @@ export function groundHeight(x, z) {
   const halfW = (BASE.width * BASE.scale) / 2,
     halfD = (BASE.depth * BASE.scale) / 2;
   const dx = Math.abs(x - BASE.x),
-    dz = Math.abs(z - BASE.z),
-    wing = BASE.wallThickness * BASE.scale;
-  // Basement excavation covers all four perimeter wings; real floor slabs provide support.
-  if (dx < halfW && dz < halfD) return dx >= halfW - wing || dz >= halfD - wing ? -BASE.basementDepth : 0;
+    dz = Math.abs(z - BASE.z);
+  // The city headquarters is solid. Basement floors belong to the independent HQ world.
+  if (dx < halfW && dz < halfD) return 0;
   // Flush entrance apron: no ramp or raised stone platform.
   if ((dx < halfW + 24 && dz < halfD + 24) || (Math.abs(x) < 80 && z >= 250 && z < 330)) return 0;
   const lookout = CITY.lookout;
@@ -230,7 +229,7 @@ export function bridgeSurfaceHeight(x, z) {
 }
 
 // Spatial bins keep walking checks independent of the total building count.
-export function createCollisionIndex() {
+export function createCollisionIndex({ groundHeight: surfaceGround = groundHeight } = {}) {
   const bins = new Map(),
     heightBins = new Map(),
     tallBins = new Map();
@@ -419,7 +418,7 @@ export function createCollisionIndex() {
     return !blockedAt(x, z, feetY, height, radius);
   }
   function surfaceHeightAt(x, z, feetY, maxStep = 0.38) {
-    let surface = groundHeight(x, z);
+    let surface = surfaceGround(x, z);
     if (!Number.isFinite(feetY)) return surface;
     const supportRadius = 0.28;
     // Descend six-metre buckets and stop once a supporting surface has been found.

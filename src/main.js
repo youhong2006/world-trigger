@@ -29,11 +29,11 @@ try {
   };
 }
 
-import { createHQRange } from './hq-range.js';
-import { createHQInterior } from './hq-interior.js';
+import { createHQWorld } from './hq-world.js';
+import { createHQPortals } from './hq-portals.js';
 import { createHQController } from './hq-ui.js';
 import { createHQTraining } from './hq-training.js';
-import { HQ } from './hq-layout.js';
+import { HQ, HQ_CORES, HQ_SPECIAL_FACILITIES, floorAt, envelopeAt } from './hq-layout.js';
 import { createHeadquarters } from './headquarters.js';
 import { createCity } from './city.js';
 import { createSky, terrainRGB } from './landscape.js';
@@ -99,7 +99,9 @@ function mat(color) {
   return materials.get(color);
 }
 let hqTraining = null,
-  hqController = null;
+  hqController = null,
+  hqWorld = null,
+  hqPortals = null;
 const worldCollision = createCollisionIndex();
 const collision = { ...worldCollision };
 for (const key of [
@@ -111,9 +113,14 @@ for (const key of [
   'hasObstacle',
   'overlapsBox',
 ])
-  collision[key] = (...args) => (hqTraining?.active ? hqTraining.index : worldCollision)[key](...args);
+  collision[key] = (...args) =>
+    (hqTraining?.active ? hqTraining.index : hqWorld?.active ? hqWorld.index : worldCollision)[key](...args);
 function groundHeight(x, z) {
-  return hqTraining?.active ? hqTraining.y : cityGroundHeight(x, z);
+  return hqTraining?.active
+    ? hqTraining.y
+    : hqWorld?.active
+      ? hqWorld.groundHeight(x, z)
+      : cityGroundHeight(x, z);
 }
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
 function box(x, y, z, w, h, d, color, collide = false, parent = scene) {
@@ -146,6 +153,7 @@ baseGroup.position.copy(baseOffset);
 scene.add(baseGroup);
 const headquarters = createHeadquarters({
   scene: baseGroup,
+  solidBody: true,
   solid(v) {
     worldCollision.add({
       x: v.x * baseScale + baseOffset.x,
@@ -177,8 +185,22 @@ const headquarters = createHeadquarters({
   },
   cylinder: (x, y, z, r, h, color, n) => cylinder(x, y, z, r, h, color, n, baseGroup),
 });
-const hqInterior = createHQInterior({ scene, collision: worldCollision });
-const hqRange = createHQRange({ scene, collision: worldCollision, storage, notify });
+hqWorld = createHQWorld({ storage, notify });
+const hqInterior = hqWorld.interior;
+const hqRange = hqWorld.range;
+hqPortals = createHQPortals({
+  cityScene: scene,
+  interiorScene: hqWorld.scene,
+  onEnter: () => transferHeadquarters(true),
+  onExit: () => transferHeadquarters(false),
+});
+const portalPrompt = document.createElement('div');
+portalPrompt.id = 'hq-portal-prompt';
+portalPrompt.hidden = true;
+document.body.append(portalPrompt);
+function activeScene() {
+  return hqTraining?.active ? hqTraining.scene : hqWorld?.active ? hqWorld.scene : scene;
+}
 const hqWorldObjects = scene.children.filter((o) => !o.isLight);
 const residentialZ = Math.round((riverZ(-1008) + 200 - 72) / 144) * 144 + 72;
 const destinations = [
@@ -229,7 +251,8 @@ const playerView = createPlayerCamera({
   camera,
   collision,
   getIgnored: () => hqController?.seatSolids,
-  groundHeight: (x, z) => Math.max(groundHeight(x, z), inRiver(x, z) ? 0.4 : -Infinity),
+  groundHeight: (x, z) =>
+    Math.max(groundHeight(x, z), !hqWorld?.active && !hqTraining?.active && inRiver(x, z) ? 0.4 : -Infinity),
 });
 const avatar = createPlayerAvatar(scene);
 const combat = createCombatCore();
@@ -372,7 +395,7 @@ const battle = createBattleSession({
 });
 function getTargets() {
   if (hqTraining?.active) return hqTraining.targets;
-  if (battle.phase === 'idle' && hqRange.active) return hqRange.targets;
+  if (hqWorld.active) return hqRange.active ? hqRange.targets : [];
   return battle.phase === 'idle' ? range.targets : battle.targets;
 }
 function playerBattleState() {
@@ -996,7 +1019,72 @@ function resume() {
   renderRequested = true;
   syncPlayerHud(true);
 }
+function restoreCityWorld() {
+  hqTraining?.stop();
+  hqController?.reset();
+  hqWorld?.exit({ motor });
+  gunEffects.setCitySceneryVisible(true);
+  battleEffects.setCitySceneryVisible(true);
+  hqPortals?.reset();
+  portalPrompt.hidden = true;
+  document.body.classList.remove('border-world');
+}
+function transferHeadquarters(entering) {
+  if (!exploring || hqTraining?.active || battle.phase !== 'idle' || range.snapshot.phase !== 'idle')
+    return false;
+  hqController?.reset();
+  clearInput();
+  shooting.reset();
+  grasshopper.reset();
+  melee.reset();
+  effects.hide();
+  gunEffects.hideWeapons();
+  battleEffects.hide();
+  const arrival = entering
+    ? hqWorld.enter({
+        motor,
+        view: viewState(),
+        objects: scene.children.filter((o) => !o.isLight && !hqWorldObjects.includes(o)),
+      })
+    : hqWorld.exit({ motor });
+  if (!arrival) return false;
+  gunEffects.setCitySceneryVisible(!hqWorld.active);
+  battleEffects.setCitySceneryVisible(!hqWorld.active);
+  yaw = arrival.yaw;
+  pitch = arrival.pitch;
+  target = null;
+  safeSpawn = { point: { ...arrival.position }, yaw, pitch };
+  document.body.classList.toggle('border-world', hqWorld.active);
+  playerView.reset();
+  playerView.update(0, viewState());
+  avatar.update(0, motor.state);
+  avatar.setVisible(playerView.avatarVisible);
+  hqController?.update(0.1, hqWorld.active, false);
+  hqRange.update(0, motor.position, hqWorld.active);
+  portalPrompt.hidden = true;
+  renderRequested = true;
+  syncPlayerHud(true);
+  drawMap();
+  notify(entering ? '已進入 BORDER 基地世界；正面傳送門可返回三門市' : '已返回三門市');
+  return true;
+}
+function updateHeadquartersPortal(dt) {
+  const enabled =
+    exploring &&
+    !paused &&
+    !ui.isOpen &&
+    !hqController?.isOpen &&
+    !hqController?.seated &&
+    !hqTraining?.active &&
+    battle.phase === 'idle' &&
+    range.snapshot.phase === 'idle';
+  const nearby = hqPortals.update(dt, motor.position, hqWorld.active ? 'hq' : 'city', enabled);
+  portalPrompt.hidden = !nearby;
+  if (nearby)
+    portalPrompt.textContent = `${keyLabel(settings.bindings.interact)}　${nearby.name} · 走入光帶也可傳送`;
+}
 function enter() {
+  restoreCityWorld();
   hqRange.reset();
   hqTraining?.stop();
   hqController?.reset();
@@ -1038,6 +1126,7 @@ function enter() {
   lockPointer();
 }
 function leave() {
+  restoreCityWorld();
   hqTraining?.stop();
   hqController?.reset();
   feedback = 0;
@@ -1173,8 +1262,8 @@ document.querySelector('#finish-challenge').onclick = () => {
   document.querySelector('#challenge-result').hidden = true;
 };
 hqTraining = createHQTraining({
-  scene,
-  worldObjects: hqWorldObjects,
+  scene: hqWorld.scene,
+  worldObjects: hqWorld.scene.children.filter((o) => !o.isLight),
   motor,
   storage,
   notify,
@@ -1191,7 +1280,7 @@ hqTraining = createHQTraining({
 });
 hqController = createHQController({
   interior: hqInterior,
-  collision: worldCollision,
+  collision: hqWorld.index,
   motor,
   getView: () => ({ ...viewState(), eyeHeight: motor.eyeHeight }),
   getKey: () => keyLabel(settings.bindings.interact),
@@ -1352,7 +1441,14 @@ function dispatchAction(action) {
   if (action === 'interact') {
     clearInput();
     if (hqTraining?.active) hqTraining.stop();
-    else hqController?.interact();
+    else if (
+      exploring &&
+      battle.phase === 'idle' &&
+      range.snapshot.phase === 'idle' &&
+      !hqController?.seated &&
+      hqPortals.interact(motor.position, hqWorld.active ? 'hq' : 'city')
+    ) {
+    } else if (hqWorld.active) hqController?.interact();
     return;
   }
   if (hqController?.seated && !['view', 'reset'].includes(action)) return;
@@ -1614,6 +1710,79 @@ mapCtx.font = '8px sans-serif';
 mapCtx.fillStyle = '#294638';
 mapCtx.fillText('BORDER', baseX - 15, baseZ - 3);
 function drawMap() {
+  if (hqWorld.active || hqTraining?.active) {
+    const simulation = !!hqTraining?.active,
+      f = floorAt(motor.position.y),
+      e = envelopeAt(f.y);
+    const project = simulation
+      ? (x, z) => [180 + x * 1.8, 130 + z * 1.25]
+      : (x, z) => [180 + x * 0.25, 130 + (z - HQ.centerZ) * 0.25];
+    ctx.fillStyle = '#0c2335';
+    ctx.fillRect(0, 0, 360, 260);
+    if (simulation) {
+      ctx.strokeStyle = '#3d93b5';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 360; i += 36) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, 260);
+        ctx.stroke();
+      }
+      for (let i = 0; i <= 260; i += 26) {
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(360, i);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#afebfa';
+      ctx.font = '13px sans-serif';
+      ctx.fillText('SIM-01  模擬訓練空間', 14, 22);
+    } else {
+      const [x, z] = project(-e.outerHalfW, HQ.centerZ - e.outerHalfD);
+      ctx.fillStyle = '#38596d';
+      ctx.fillRect(x, z, e.outerHalfW * 0.5, e.outerHalfD * 0.5);
+      const [ix, iz] = project(-e.innerHalfW, HQ.centerZ - e.innerHalfD);
+      ctx.fillStyle = '#172f3d';
+      ctx.fillRect(ix, iz, e.innerHalfW * 0.5, e.innerHalfD * 0.5);
+      ctx.font = '10px sans-serif';
+      for (const core of HQ_CORES) {
+        const [cx, cz] = project(core.x, core.z);
+        ctx.fillStyle = '#5ce2ed';
+        ctx.fillRect(cx - 3, cz - 3, 6, 6);
+        ctx.fillText(core.code, cx + 5, cz + 3);
+      }
+      for (const facility of HQ_SPECIAL_FACILITIES.filter(
+        (s) => motor.position.y >= s.y - 0.3 && motor.position.y < s.top,
+      )) {
+        const [cx, cz] = project(facility.world.x, facility.world.z);
+        ctx.fillStyle = facility.id === 'hangar' ? '#d9cd80' : '#9edbe5';
+        ctx.fillRect(cx - 4, cz - 4, 8, 8);
+        ctx.fillText(facility.code, cx + 6, cz - 5);
+      }
+      ctx.fillStyle = '#baf3f7';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(`BORDER 基地世界 / ${f.id}`, 14, 22);
+    }
+    const [px, pz] = project(motor.position.x, motor.position.z);
+    ctx.fillStyle = '#ffdc9a';
+    ctx.beginPath();
+    ctx.arc(px, pz, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffdc9a';
+    ctx.beginPath();
+    ctx.moveTo(px, pz);
+    ctx.lineTo(px - Math.sin(yaw) * 12, pz - Math.cos(yaw) * 12);
+    ctx.stroke();
+    document.querySelector('#location').textContent = simulation
+      ? 'SIM-01 模擬空間'
+      : `BORDER 獨立世界 · ${f.id}`;
+    document.querySelector('#coordinates').textContent =
+      `X ${Math.round(motor.position.x)} / Z ${Math.round(motor.position.z)}`;
+    mc.setAttribute('aria-label', simulation ? '模擬訓練場地圖' : 'BORDER 基地目前樓層平面圖');
+    return;
+  }
+  mc.setAttribute('aria-label', '目前位置與城市地圖');
+  document.querySelector('#location').textContent = exploring ? destinations[current].name : '三門市全域';
   const local = battle.phase !== 'idle';
   const projection = local
     ? (x, z) => [180 + ((x - ARENA.x) * 180) / ARENA.radius, 130 + ((z - ARENA.z) * 130) / ARENA.radius]
@@ -1691,7 +1860,7 @@ renderer.setAnimationLoop((now) => {
   const elapsed = Math.min(clock.getDelta(), 0.25);
   if (paused) {
     if (renderRequested) {
-      renderer.render(hqTraining?.active ? hqTraining.scene : scene, camera);
+      renderer.render(activeScene(), camera);
       renderRequested = false;
     }
     return;
@@ -1704,9 +1873,9 @@ renderer.setAnimationLoop((now) => {
       const dt = Math.min(remaining, 1 / 120),
         from = { ...motor.position };
       if (endedChallenge()) break;
-      hqController?.update(dt, true, !!hqTraining?.active);
+      hqController?.update(dt, hqWorld.active, !!hqTraining?.active);
       hqTraining?.update(dt);
-      hqRange.update(dt, motor.position, !hqTraining?.active && battle.phase === 'idle');
+      hqRange.update(dt, motor.position, hqWorld.active && !hqTraining?.active && battle.phase === 'idle');
       combat.update(dt);
       range.update(dt);
       melee.update(dt, { blade: !!bladeSide(), shield: activeTrigger('shield'), grounded: motor.grounded });
@@ -1733,6 +1902,7 @@ renderer.setAnimationLoop((now) => {
       }
       if (!hqController?.seated) motor.update(dt, movement, yaw);
       if (combat.snapshot.state !== 'exhausted') grasshopper.checkStep(from, motor.position, input, yaw);
+      updateHeadquartersPortal(dt);
       input.jumpPressed = false;
       remaining -= dt;
     }
@@ -1741,7 +1911,11 @@ renderer.setAnimationLoop((now) => {
     if (
       ![point.x, point.y, point.z].every(Number.isFinite) ||
       point.y < groundHeight(point.x, point.z) - 8 ||
-      (inRiver(point.x, point.z) && !CITY.bridges.some((x) => Math.abs(x - point.x) < 10) && point.y < 0.65)
+      (!hqWorld.active &&
+        !hqTraining?.active &&
+        inRiver(point.x, point.z) &&
+        !CITY.bridges.some((x) => Math.abs(x - point.x) < 10) &&
+        point.y < 0.65)
     ) {
       respawn();
       notify('已返回安全起點；可使用蚱蜢從空中跨越河流');
@@ -1794,7 +1968,7 @@ renderer.setAnimationLoop((now) => {
     gunEffects.update(
       elapsed,
       shooting.snapshot,
-      !hqTraining?.active && battle.phase === 'idle' ? range.targets : [],
+      !hqWorld.active && !hqTraining?.active && battle.phase === 'idle' ? range.targets : [],
       { main: muzzleMain, sub: muzzleSub },
       true,
     );
@@ -1845,11 +2019,12 @@ renderer.setAnimationLoop((now) => {
     document.querySelector('#fps-display').textContent = `FPS ${fps}`;
   }
   if (!exploring) {
+    portalPrompt.hidden = true;
     hqController?.update(0, false);
     hqRange.update(0, camera.position, false);
   }
-  city.architecture.update(camera, settings.detailDistance);
-  renderer.render(hqTraining?.active ? hqTraining.scene : scene, camera);
+  if (!hqWorld.active && !hqTraining?.active) city.architecture.update(camera, settings.detailDistance);
+  renderer.render(activeScene(), camera);
   renderRequested = false;
 });
 window.addEventListener('resize', () => {
@@ -1910,7 +2085,11 @@ window.__mikado = {
         bounds: CITY.halfSize,
         headquartersCenter: [0, -150],
       },
+      world: hqTraining?.active ? 'simulation' : hqWorld.active ? 'border' : 'city',
       headquarters: {
+        independentWorld: hqWorld.snapshot,
+        portals: hqPortals.snapshot,
+        citySolid: true,
         ...hqController?.snapshot,
         simulation: hqTraining?.snapshot,
         liveRange: hqRange.snapshot,

@@ -116,14 +116,20 @@ test('red reference band is a long physical front range with upper observation l
     assert.ok(HQ_SECTIONS.some((s) => s.wing === 'front' && s.y === y && s.kind === 'rangeGallery'));
 });
 
-test('ground entry is flush while all four basement wings are excavated beneath actual support slabs', () => {
+test('city headquarters stays at street grade while independent basement slabs retain their own ground datum', () => {
+  const f = fixture();
   assert.equal(groundHeight(0, 285), 0);
-  assert.equal(groundHeight(0, HQ.gate.z), HQ_FLOORS[0].y);
+  assert.equal(groundHeight(0, HQ.gate.z), 0);
   for (const wing of HQ_WINGS) {
     const p = wingPoint(wing, HQ_FLOORS[0].y);
-    assert.equal(groundHeight(p.x, p.z), HQ_FLOORS[0].y, wing);
+    assert.equal(groundHeight(p.x, p.z), 0, wing + ' city ground');
+    assert.equal(
+      f.collision.surfaceHeightAt(p.x, p.z, HQ_FLOORS[0].y, 0.38),
+      HQ_FLOORS[0].y,
+      wing + ' basement',
+    );
   }
-  assert.equal(groundHeight(0, HQ.centerZ), 0, 'open courtyard keeps its ground');
+  assert.equal(groundHeight(0, HQ.centerZ), 0, 'city footprint remains flat');
 });
 
 test('removing streamed colliders clears both height bins and camera/body queries without ghost obstacles', () => {

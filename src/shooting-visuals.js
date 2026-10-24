@@ -4,6 +4,11 @@ export function createShootingVisuals(scene, collision) {
   const root = new THREE.Group();
   root.name = 'Shooting range and trion weapons';
   scene.add(root);
+  // Weapons travel with the player; city-only deck and cover must stay hidden
+  // in the independent headquarters and its nested training simulation.
+  const scenery = new THREE.Group();
+  scenery.name = 'City shooting range scenery';
+  root.add(scenery);
   const cyan = new THREE.MeshBasicMaterial({ color: '#10d7ed', toneMapped: false });
   const faint = new THREE.MeshBasicMaterial({
     color: '#13d4eb',
@@ -27,7 +32,7 @@ export function createShootingVisuals(scene, collision) {
   deck.position.set(95, 0.06, 350);
   // Keep the thin overlay out of the kilometre-scale shadow map to avoid self-shadow bands.
   deck.receiveShadow = false;
-  root.add(deck);
+  scenery.add(deck);
   for (const { x, z, w, d, h } of [
     { x: 75, z: 390, w: 12, d: 2, h: 2.2 },
     { x: 110, z: 395, w: 10, d: 2, h: 3 },
@@ -38,7 +43,7 @@ export function createShootingVisuals(scene, collision) {
     );
     mesh.position.set(x, h / 2, z);
     mesh.castShadow = mesh.receiveShadow = true;
-    root.add(mesh);
+    scenery.add(mesh);
     collision.add({ x, z, w, d, y: 0, h });
   }
   const targetGroups = new Map();
@@ -212,11 +217,19 @@ export function createShootingVisuals(scene, collision) {
   return {
     update,
     event,
+    setCitySceneryVisible(visible) {
+      scenery.visible = !!visible;
+    },
     configure(s) {
       glow = s.glow;
       reduced = s.reducedMotion;
     },
     hideWeapons() {
+      for (const burst of bursts.splice(0)) {
+        root.remove(burst.mesh);
+        burst.mesh.material.dispose();
+        burst.mesh.geometry.dispose();
+      }
       bullets.visible = glows.visible = false;
       for (const v of Object.values(cubes)) v.group.visible = false;
     },

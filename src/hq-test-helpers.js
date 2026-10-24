@@ -25,7 +25,18 @@ export function installCanvasDocument() {
 }
 export function fixture() {
   installCanvasDocument();
-  const collision = createCollisionIndex(),
+  // This fixture exercises the hollow interior world. Its basement datum must
+  // remain independent of the city's now-flat, solid headquarters footprint.
+  const interiorGround = (x, z) => {
+    const dx = Math.abs(x - BASE.x),
+      dz = Math.abs(z - BASE.z),
+      halfW = (BASE.width * BASE.scale) / 2,
+      halfD = (BASE.depth * BASE.scale) / 2,
+      wing = BASE.wallThickness * BASE.scale;
+    if (dx < halfW && dz < halfD) return dx >= halfW - wing || dz >= halfD - wing ? -BASE.basementDepth : 0;
+    return groundHeight(x, z);
+  };
+  const collision = createCollisionIndex({ groundHeight: interiorGround }),
     scene = new THREE.Scene();
   // The exterior owns the roof, courtyard and tapered skins. Include its real
   // colliders so exit/entry tests exercise the same complete building as the game.
@@ -52,7 +63,7 @@ export function fixture() {
     cylinder: shellMesh,
   });
   const interior = createHQInterior({ scene, collision });
-  const motor = createCharacterMotor({ groundHeight, collision });
+  const motor = createCharacterMotor({ groundHeight: interiorGround, collision });
   motor.configure({ walkSpeed: 5, sprintSpeed: 14 });
   const doors = createDoorSystem(interior.doors),
     lifts = new Map(

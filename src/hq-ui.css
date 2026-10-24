@@ -312,3 +312,23 @@
     right: 15px;
   }
 }
+
+#hq-portal-prompt {
+  position: fixed;
+  left: 50%;
+  top: 58%;
+  transform: translateX(-50%);
+  max-width: min(560px, 85vw);
+  padding: 12px 20px;
+  border: 1px solid #55e9ed;
+  background: #0d2a3bef;
+  color: #c6fcff;
+  border-radius: 5px;
+  z-index: 13;
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none;
+}
+#hq-portal-prompt[hidden] {
+  display: none;
+}

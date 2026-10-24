@@ -4,6 +4,9 @@ export function createBattleVisuals(scene, collision, groundHeight = () => 0) {
   const root = new THREE.Group();
   root.name = 'Combat robots and energy effects';
   scene.add(root);
+  const scenery = new THREE.Group();
+  scenery.name = 'City battle cover scenery';
+  root.add(scenery);
   const cyan = new THREE.MeshBasicMaterial({ color: '#0bd8ee', toneMapped: false });
   const white = new THREE.MeshBasicMaterial({ color: '#c5ffff', toneMapped: false });
   const dark = new THREE.MeshToonMaterial({ color: '#263b4d' }),
@@ -32,8 +35,8 @@ export function createBattleVisuals(scene, collision, groundHeight = () => 0) {
   }
   for (const cover of BATTLE_COVERS) {
     const y = groundHeight(cover.x, cover.z);
-    mesh(geo.box, armor, [cover.x, y + cover.h / 2, cover.z], [cover.w, cover.h, cover.d]);
-    mesh(geo.box, cyan, [cover.x, y + cover.h + 0.015, cover.z], [cover.w, 0.025, cover.d + 0.03]);
+    mesh(geo.box, armor, [cover.x, y + cover.h / 2, cover.z], [cover.w, cover.h, cover.d], scenery);
+    mesh(geo.box, cyan, [cover.x, y + cover.h + 0.015, cover.z], [cover.w, 0.025, cover.d + 0.03], scenery);
     collision?.add({ ...cover, y });
   }
   const robots = Array.from({ length: 16 }, () => {
@@ -296,6 +299,9 @@ export function createBattleVisuals(scene, collision, groundHeight = () => 0) {
   return {
     event,
     update,
+    setCitySceneryVisible(visible) {
+      scenery.visible = !!visible;
+    },
     configure(s) {
       glow = s.glow;
       reduced = s.reducedMotion;
