@@ -153,7 +153,7 @@ baseGroup.position.copy(baseOffset);
 scene.add(baseGroup);
 const headquarters = createHeadquarters({
   scene: baseGroup,
-  solidBody: true,
+  landmarkOnly: true,
   solid(v) {
     worldCollision.add({
       x: v.x * baseScale + baseOffset.x,
@@ -2089,7 +2089,8 @@ window.__mikado = {
       headquarters: {
         independentWorld: hqWorld.snapshot,
         portals: hqPortals.snapshot,
-        citySolid: true,
+        citySolid: false,
+        cityLandmark: true,
         ...hqController?.snapshot,
         simulation: hqTraining?.snapshot,
         liveRange: hqRange.snapshot,

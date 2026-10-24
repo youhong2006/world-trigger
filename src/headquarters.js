@@ -3,8 +3,8 @@ import { fortressGeometry } from './hq-geometry.js';
 import * as Layout from './hq-layout.js';
 import { BASE } from './city-layout.js';
 
-/** Gently tapered fortress; the city uses a sealed body, while the independent HQ world keeps its hollow shell. */
-export function createHeadquarters({ scene, box, cylinder, solid, solidBody = false }) {
+/** The city landmark retains its open courtyard; explorable facilities belong to the independent world. */
+export function createHeadquarters({ scene, box, cylinder, solid, solidBody = false, landmarkOnly = false }) {
   const { taperedVolume } = Layout;
   const center = { x: 23, z: -117 };
   const scale = BASE.scale,
@@ -106,6 +106,53 @@ export function createHeadquarters({ scene, box, cylinder, solid, solidBody = fa
   const xInsetAt = (y) => (insetX * Math.max(0, y)) / height;
   const zInsetAt = (y) => (insetZ * Math.max(0, y)) / height;
 
+  if (landmarkOnly) {
+    // Fill only the four occupied wings. The original open courtyard stays empty.
+    const blocks = [
+      [
+        center.x,
+        front - thickness / 2,
+        width,
+        thickness,
+        center.x,
+        front - insetZ - thickness / 2,
+        width - insetX * 2,
+        thickness,
+      ],
+      [
+        center.x,
+        back + thickness / 2,
+        width,
+        thickness,
+        center.x,
+        back + insetZ + thickness / 2,
+        width - insetX * 2,
+        thickness,
+      ],
+      [
+        left + thickness / 2,
+        center.z,
+        thickness,
+        innerDepth,
+        left + insetX + thickness / 2,
+        center.z,
+        thickness,
+        innerDepth - insetZ * 2,
+      ],
+      [
+        right - thickness / 2,
+        center.z,
+        thickness,
+        innerDepth,
+        right - insetX - thickness / 2,
+        center.z,
+        thickness,
+        innerDepth - insetZ * 2,
+      ],
+    ];
+    for (const [x, z, w, d, topX, topZ, topW, topD] of blocks)
+      solid?.(taperedVolume({ x, z, w, d, y: 0, h: roofY, topX, topZ, topW, topD }));
+  }
   if (solidBody) {
     // One convex volume seals every city-side floor and the former courtyard.
     // Detailed rooms and their collision live exclusively in the separate HQ world.
@@ -159,7 +206,8 @@ export function createHeadquarters({ scene, box, cylinder, solid, solidBody = fa
     gateR = worldX(7),
     sideL = worldX(-13.3),
     sideR = worldX(-10.7);
-  if (solidBody) frontStrip(left, right, basementY, roofY);
+  if (landmarkOnly) frontStrip(left + thickness, right - thickness, basementY, roofY, true);
+  if (solidBody || landmarkOnly) frontStrip(left, right, basementY, roofY);
   else {
     frontStrip(left, right, basementY, 0);
     for (const [a, b] of [
@@ -419,12 +467,13 @@ export function createHeadquarters({ scene, box, cylinder, solid, solidBody = fa
         },
       ];
   const coreDefinitions = Layout.HQ_CORES ?? [{ x: 43, z: 198 }];
-  const holes = solidBody
-    ? []
-    : coreDefinitions.flatMap((core) => [
-        { x0: worldX(core.x - 2), x1: worldX(core.x + 2), z0: worldZ(core.z - 2), z1: worldZ(core.z + 2) },
-        { x0: worldX(core.x + 5), x1: worldX(core.x + 19), z0: worldZ(core.z - 6), z1: worldZ(core.z + 8) },
-      ]);
+  const holes =
+    solidBody || landmarkOnly
+      ? []
+      : coreDefinitions.flatMap((core) => [
+          { x0: worldX(core.x - 2), x1: worldX(core.x + 2), z0: worldZ(core.z - 2), z1: worldZ(core.z + 2) },
+          { x0: worldX(core.x + 5), x1: worldX(core.x + 19), z0: worldZ(core.z - 6), z1: worldZ(core.z + 8) },
+        ]);
   let pieces = roofRects;
   for (const hole of holes)
     pieces = pieces.flatMap((r) => {
@@ -641,7 +690,12 @@ export function createHeadquarters({ scene, box, cylinder, solid, solidBody = fa
   scene.add(sideEmblem);
 
   return {
-    name: solidBody ? 'BORDER solid city landmark' : 'BORDER full-perimeter hollow fortress',
+    name: landmarkOnly
+      ? 'BORDER open-courtyard city landmark'
+      : solidBody
+        ? 'BORDER solid city landmark'
+        : 'BORDER full-perimeter hollow fortress',
+    landmarkOnly,
     solidBody,
     openRoof: !solidBody,
     courtyard: { width: innerWidth, depth: innerDepth },
@@ -652,7 +706,7 @@ export function createHeadquarters({ scene, box, cylinder, solid, solidBody = fa
     towers: 4,
     emblems: 2,
     stoneFoundation: false,
-    occupiedWingDepth: solidBody ? 0 : thickness * scale,
+    occupiedWingDepth: solidBody || landmarkOnly ? 0 : thickness * scale,
     basementDepth: -basementY * scale,
     gate: {
       x: 0,

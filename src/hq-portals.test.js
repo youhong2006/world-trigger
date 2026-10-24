@@ -69,6 +69,71 @@ test('city fortress has one solid tapered body and a continuous roof instead of 
   );
 });
 
+test('city landmark preserves the original open courtyard while its wings contain no accessible facilities', () => {
+  installCanvasDocument();
+  const index = createCollisionIndex(),
+    scene = new THREE.Scene(),
+    volumes = [],
+    boxes = [];
+  const scale = BASE.scale,
+    offset = { x: -23 * scale, z: BASE.z + 117 * scale };
+  const convert = (v) => ({
+    ...v,
+    x: v.x * scale + offset.x,
+    y: v.y * scale,
+    z: v.z * scale + offset.z,
+    w: v.w * scale,
+    h: v.h * scale,
+    d: v.d * scale,
+    planes: v.planes?.map(([nx, ny, nz, a]) => [nx, ny, nz, a * scale + nx * offset.x + nz * offset.z]),
+  });
+  const result = createHeadquarters({
+    scene,
+    landmarkOnly: true,
+    solid(v) {
+      volumes.push(v);
+      index.add(convert(v));
+    },
+    box(x, y, z, w, h, d, color, solid = false) {
+      boxes.push({ x, y, z, w, h, d });
+      if (solid) index.add(convert({ x, y, z, w, h, d }));
+      return new THREE.Object3D();
+    },
+    cylinder: () => new THREE.Object3D(),
+  });
+  assert.equal(result.openRoof, true);
+  assert.equal(result.landmarkOnly, true);
+  assert.equal(result.occupiedWingDepth, 0);
+  for (const y of [0, 100, 340])
+    assert.equal(index.canOccupy(0, -150, y, 1.75, 0.3), true, 'courtyard remains empty');
+  assert.equal(
+    index.segmentFraction({ x: 0, y: 400, z: -150 }, { x: 0, y: 1, z: -150 }, 0.1),
+    1,
+    'no roof over courtyard',
+  );
+  assert.ok(
+    Math.abs(index.surfaceHeightAt(0, -150, 350.1, 0.5)) < 0.03,
+    'courtyard ground remains at street grade',
+  );
+  for (const [x, z] of [
+    [43, 198],
+    [520, -150],
+    [0, -440],
+    [-520, -150],
+  ]) {
+    assert.equal(index.canOccupy(x, z, 100, 1.75, 0.3), false, 'wings do not expose empty rooms');
+    assert.ok(
+      Math.abs(index.surfaceHeightAt(x, z, 350.1, 0.5) - 350) < 0.03,
+      'roof ring has no unused lift openings',
+    );
+  }
+  assert.equal(index.canOccupy(0, 278, 0, 1.75, 0.3), true, 'portal approach clear');
+  assert.ok(
+    boxes.some((b) => Math.abs(b.w * scale - 928) < 0.1 && Math.abs(b.d * scale - 480) < 0.1),
+    'original courtyard slab exists',
+  );
+});
+
 test('doorway transfers in both directions, with safe cooldown and independent world tracking', () => {
   let enter = 0,
     exit = 0;
